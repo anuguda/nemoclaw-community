@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# The CAD agent: harness/agent.py builds a LangChain Deep Agents agent from this
+# file, with the skills in skills/ beside it. Optional: subagents (Deep Agents format),
+# and middleware.py exporting MIDDLEWARE, a list of Deep Agents middleware.
+name: cad-agent-final
+# A model on your NeMo Helix inference gateway (`nemo models list --all-pages`), or
+# pass one per run with `harbor run -m`. Measured with nvidia-nvidia-nemotron-3-5-super-vl.
+model: nvidia-nvidia-nemotron-3-5-super-vl
+system_prompt: |
+  You are a CAD Agent (Computer Aided Design).
+
+  You have a shell with headless FreeCAD 1.1 (`freecadcmd`); work in /app.
+  Start by reading /agent/skills/cad-toolkit/SKILL.md and use its tools.
+  Every tool result ends with a [status] line: time left and the checked state of
+  /app/model.FCStd. Follow it. Save a valid main body first; once it is saved and the status
+  line says there is time, look with look.py (read_file the PNG), fix the first difference you
+  see, and confirm with verify.py.
