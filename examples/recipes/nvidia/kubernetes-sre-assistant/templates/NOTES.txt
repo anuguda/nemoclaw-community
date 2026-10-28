@@ -1,13 +1,23 @@
+{{/*
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+*/}}
 {{- $sre := .Values.global.sre -}}
 {{- $cli := ternary "oc" "kubectl" .Values.deployer.platform.openshift.enabled -}}
 {{- $deployer := include "sre-assistant.deployerFullname" . -}}
 {{- $sandbox := printf "%s-hermes" .Release.Name | trunc 19 | trimSuffix "-" -}}
+{{- $sandbox = default $sandbox .Values.deployer.agent.sandbox.name -}}
 Kubernetes SRE assistant ({{ .Release.Name }}) is layered on the kubernetes-deployer chart.
 
 Cluster access
-  Mode: {{ $sre.rbac.mode }} (DELETE is never granted)
+  Mode: {{ $sre.rbac.mode }}
   {{- if eq $sre.rbac.mode "safe" }}
   Safe mode reads common non-secret resources and scales Deployments/StatefulSets only.
+  {{- else if eq $sre.rbac.mode "protected-advanced" }}
+  Application create/patch/update and named deletion are enabled through the proxy.
+  Core namespaces, cluster-scoped mutations/CRDs, credential data, and PVC deletion are blocked.
+  {{- else if eq $sre.rbac.mode "read-only" }}
+  Read-only access: no mutations or deletion.
   {{- else }}
   broad-no-delete grants create/patch/update across API groups; review templates/sre-rbac.yaml.
   {{- end }}
@@ -24,14 +34,26 @@ Cluster access
   {{- end }}
 {{- end }}
 
-Hermes (provided by the deployer subchart, resources named {{ $deployer }}-*)
+{{ ternary "OpenClaw" "Hermes" (eq .Values.deployer.agent.runtime "openclaw") }} (provided by the deployer subchart, resources named {{ $deployer }}-*)
   Sandbox status:  {{ $cli }} -n {{ .Release.Namespace }} get sandbox default--{{ $sandbox }}
+{{- if or (not .Release.IsUpgrade) .Values.deployer.lifecycle.seed.runOnUpgrade }}
   Skills seeded:   {{ $cli }} -n {{ .Release.Namespace }} logs job/{{ $deployer }}-seed-{{ .Release.Revision }}
-  Dashboard/API:   {{ $cli }} -n {{ .Release.Namespace }} port-forward svc/{{ $deployer }}-access 18789:18789 8642:8642
-                   then http://127.0.0.1:18789/ and http://127.0.0.1:8642/v1
+{{- end }}
+{{- if and (eq .Values.deployer.agent.runtime "hermes") .Values.deployer.access.enabled }}
+  Dashboard/API:   {{ $cli }} -n {{ .Release.Namespace }} port-forward svc/{{ $deployer }}-access{{ if .Values.deployer.access.dashboard.enabled }} {{ .Values.deployer.access.dashboard.port }}:{{ .Values.deployer.access.dashboard.port }}{{ end }}{{ if .Values.deployer.access.api.enabled }} {{ .Values.deployer.access.api.port }}:{{ .Values.deployer.access.api.port }}{{ end }}
+{{- if .Values.deployer.access.dashboard.enabled }}
+  Dashboard URL:   http://127.0.0.1:{{ .Values.deployer.access.dashboard.port }}/
+{{- end }}
+{{- if .Values.deployer.access.api.enabled }}
+  API URL:         http://127.0.0.1:{{ .Values.deployer.access.api.port }}/v1
   Bearer token:    {{ $cli }} -n {{ .Release.Namespace }} exec deploy/{{ $deployer }}-access -c relay -- /tools/nemoclaw-access gateway-token --quiet
-  Terminal chat:   set deployer.operatorClient.enabled=true, then
-                   {{ $cli }} -n {{ .Release.Namespace }} attach -it statefulset/{{ $deployer }}-operator-client -c hermes-chat
+{{- end }}
+{{- end }}
+{{- if .Values.deployer.operatorClient.enabled }}
+  Terminal chat:   {{ $cli }} -n {{ .Release.Namespace }} attach -it statefulset/{{ $deployer }}-operator-client -c hermes-chat
+{{- else }}
+  Terminal chat:   enable deployer.operatorClient.enabled to create the terminal client.
+{{- end }}
   Ask the assistant, for example: "Which pods in {{ .Release.Namespace }} are not Ready?"
   Pass --render-subchart-notes to helm install/upgrade for the deployer's full notes.
 

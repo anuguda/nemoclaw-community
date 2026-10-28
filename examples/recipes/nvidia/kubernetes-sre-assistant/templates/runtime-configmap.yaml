@@ -24,3 +24,7 @@ data:
     {{- .Files.Get "files/sre-skills.tar.xz.sha256" | nindent 4 }}
   sre-skills.manifest.sha256: |
     {{- .Files.Get "files/sre-skills.manifest.sha256" | nindent 4 }}
+{{- range $path, $_ := .Files.Glob "files/reports/*" }}
+  {{ base $path }}: |
+    {{- $.Files.Get $path | nindent 4 }}
+{{- end }}

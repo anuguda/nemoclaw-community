@@ -36,7 +36,22 @@ platform:
 imagePullSecrets: []
 
 agent:
+  # NemoClaw remains the managed runtime for both harnesses.
+  runtime: hermes
+  slack:
+    enabled: false
+    # Official managed v0.0.130 images include native Slack dependencies.
+    # Helm supplies the non-secret runtime plan; no custom image is required.
+    responseStyle: standard  # standard | incident-summary (evidence-based SRE bullets)
+    allowedUsers: []
+    allowedChannels: []
+    secretRef:
+      name: ""
+      botTokenKey: bot-token
+      appTokenKey: app-token
   image:
+    # Required only for a custom, digest-pinned messaging-enabled image.
+    customAcknowledgement: ""
     # Official multi-architecture NemoClaw-managed Hermes v0.0.117 image.
     multiarch: ghcr.io/nvidia/nemoclaw/hermes-sandbox@sha256:bcc2704ae28755fa0b9a1b5314f9438e614ca7a87e26ee401f32e3b6ecdf427d
     pullPolicy: IfNotPresent

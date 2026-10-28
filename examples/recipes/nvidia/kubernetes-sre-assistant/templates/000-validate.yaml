@@ -34,11 +34,34 @@
 {{- fail "global.sre.bundle.parts must list the chunk names from files/sre-skills.parts.json in order; run scripts/build-sre-skills-bundle.py" -}}
 {{- end -}}
 {{- /* Access modes and acknowledgements. */ -}}
-{{- if not (has $sre.rbac.mode (list "safe" "broad-no-delete")) -}}
-{{- fail "global.sre.rbac.mode must be safe or broad-no-delete" -}}
+{{- if not (has $sre.rbac.mode (list "read-only" "safe" "broad-no-delete" "protected-advanced")) -}}
+{{- fail "global.sre.rbac.mode must be read-only, safe, broad-no-delete or protected-advanced" -}}
 {{- end -}}
 {{- if and (eq $sre.rbac.mode "broad-no-delete") (ne $sre.rbac.dangerousAcknowledgement "I_ACKNOWLEDGE_CLUSTER_WIDE_NO_DELETE") -}}
 {{- fail "global.sre.rbac.dangerousAcknowledgement must equal I_ACKNOWLEDGE_CLUSTER_WIDE_NO_DELETE for broad-no-delete mode" -}}
+{{- end -}}
+{{- if and (eq $sre.rbac.mode "protected-advanced") (ne $sre.rbac.dangerousAcknowledgement "I_ACKNOWLEDGE_PROTECTED_CLUSTER_REMEDIATION") -}}
+{{- fail "protected-advanced requires I_ACKNOWLEDGE_PROTECTED_CLUSTER_REMEDIATION" -}}
+{{- end -}}
+{{- if and $deployer.agent.slack.enabled (ne $sre.rbac.mode "read-only") (not $sre.slackRemediation.enabled) -}}
+{{- fail "Slack chat requires global.sre.rbac.mode=read-only unless global.sre.slackRemediation.enabled=true" -}}
+{{- end -}}
+{{- if and $sre.slackRemediation.enabled (not $deployer.agent.slack.enabled) -}}
+{{- fail "Slack remediation requires Slack to be enabled" -}}
+{{- end -}}
+{{- if and $deployer.agent.slack.enabled $sre.openshiftLlmDeploy.deletion.enabled -}}
+{{- fail "Slack access never enables model deletion" -}}
+{{- end -}}
+{{- if $sre.reports.enabled -}}
+{{- if not $deployer.lifecycle.seed.enabled -}}
+{{- fail "Scheduled reports require lifecycle.seed.enabled=true to stage the report collectors" -}}
+{{- end -}}
+{{- if or (not $deployer.agent.slack.enabled) (ne $deployer.agent.runtime "openclaw") -}}
+{{- fail "Scheduled Slack reports currently require the native OpenClaw Slack runtime" -}}
+{{- end -}}
+{{- if not (has $sre.reports.channel $deployer.agent.slack.allowedChannels) -}}
+{{- fail "The scheduled report channel must be in the Slack channel allowlist" -}}
+{{- end -}}
 {{- end -}}
 {{- $proxyTls := $sre.proxy.tlsSecretRef -}}
 {{- if or (eq $proxyTls.caKey $proxyTls.certKey) (eq $proxyTls.caKey $proxyTls.privateKeyKey) (eq $proxyTls.certKey $proxyTls.privateKeyKey) -}}
@@ -48,8 +71,8 @@
 {{- if and $llm.metrics.enabled (not $llm.enabled) -}}
 {{- fail "global.sre.openshiftLlmDeploy.metrics.enabled requires global.sre.openshiftLlmDeploy.enabled=true" -}}
 {{- end -}}
-{{- if and $llm.enabled (ne $sre.rbac.mode "broad-no-delete") -}}
-{{- fail "global.sre.openshiftLlmDeploy.enabled requires global.sre.rbac.mode=broad-no-delete because model deployment creates and patches workloads" -}}
+{{- if and $llm.enabled (not (has $sre.rbac.mode (list "broad-no-delete" "protected-advanced"))) -}}
+{{- fail "global.sre.openshiftLlmDeploy.enabled requires global.sre.rbac.mode=broad-no-delete or protected-advanced because model deployment creates and patches workloads" -}}
 {{- end -}}
 {{- if and $llm.enabled (not $llm.modelRunnerServiceAccount.create) (not $llm.modelRunnerServiceAccount.name) -}}
 {{- fail "global.sre.openshiftLlmDeploy.modelRunnerServiceAccount.name is required when create=false" -}}

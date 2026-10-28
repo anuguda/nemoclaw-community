@@ -1,3 +1,7 @@
+{{/*
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+*/}}
 {{- $cli := ternary "oc" "kubectl" .Values.platform.openshift.enabled -}}
 {{- $sandbox := include "nemoclaw-openshell.agentName" . -}}
 {{- $accessEnabled := include "nemoclaw-openshell.accessEnabled" . -}}
@@ -6,7 +10,7 @@
 {{- $accessName := include "nemoclaw-openshell.accessName" . -}}
 {{- $dashboardUrl := include "nemoclaw-openshell.dashboardPublicUrl" . -}}
 {{- $apiUrl := include "nemoclaw-openshell.apiPublicUrl" . -}}
-NemoClaw Hermes is configured through OpenShell.
+NemoClaw {{ .Values.agent.runtime | title }} is configured through OpenShell.
 
 Platform: {{ ternary "OpenShift" "Kubernetes" .Values.platform.openshift.enabled }}
 Sandbox: {{ $sandbox }}

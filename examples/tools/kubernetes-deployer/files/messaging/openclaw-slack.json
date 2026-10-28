@@ -1,0 +1,33 @@
+{
+  "channels": [
+    {
+      "channelId": "slack",
+      "active": true
+    }
+  ],
+  "disabledChannels": [],
+  "runtimeSetup": {
+    "nodePreloads": [
+      {
+        "channelId": "slack",
+        "source": "/usr/local/lib/nemoclaw/preloads/slack-channel-guard.js",
+        "target": "/tmp/nemoclaw-slack-channel-guard.js",
+        "injectInto": [
+          "boot",
+          "connect"
+        ],
+        "optional": false
+      }
+    ],
+    "envAliases": [],
+    "secretScans": [
+      {
+        "channelId": "slack",
+        "path": "/sandbox/.openclaw/openclaw.json",
+        "pattern": "(?:xoxb|xapp)-(?!OPENSHELL-RESOLVE-ENV-)",
+        "message": "Slack credential found in managed configuration",
+        "exitCode": 78
+      }
+    ]
+  }
+}

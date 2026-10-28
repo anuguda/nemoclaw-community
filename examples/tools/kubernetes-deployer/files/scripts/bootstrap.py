@@ -7,6 +7,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import shlex
 from pathlib import Path
 import ssl
 import subprocess
@@ -494,6 +495,29 @@ def delete_sandbox() -> None:
     raise SystemExit(f"sandbox {name} still exists 300 seconds after the delete request; inspect the gateway before retrying")
 
 
+def reconcile_slack_provider() -> None:
+    """Reconcile credentials only on the release-owned gateway, never in sandbox env."""
+    slack = CONFIG.get("slack", {})
+    if not slack.get("enabled"):
+        return
+    name = slack["providerName"]
+    profile = run(["provider", "profile", "export", name], check=False, capture=True)
+    if profile.returncode != 0:
+        if not reports_not_found(profile):
+            raise SystemExit("unable to inspect Slack provider profile")
+        result = run(["provider", "profile", "import", "--file", "/runtime/slack-provider.yaml"], check=False, capture=True)
+        if result.returncode:
+            raise SystemExit("unable to import Slack provider profile")
+    existing = run(["provider", "get", name], check=False, capture=True)
+    if existing.returncode and not reports_not_found(existing):
+        raise SystemExit("unable to inspect Slack provider")
+    args = ["provider", "update", name] if existing.returncode == 0 else ["provider", "create", "--name", name, "--type", name]
+    # CLI reads these from the bootstrap Job environment. Never put values in argv.
+    result = run([*args, "--credential", "SLACK_BOT_TOKEN", "--credential", "SLACK_APP_TOKEN"], check=False, capture=True)
+    if result.returncode:
+        raise SystemExit("unable to reconcile Slack provider credentials")
+
+
 def create_sandbox() -> None:
     sandbox = CONFIG["sandbox"]
     arguments = [
@@ -517,6 +541,10 @@ def create_sandbox() -> None:
         "--detach",
         "--no-tty",
     ]
+    slack = CONFIG.get("slack", {})
+    runtime = CONFIG.get("agentRuntime", "hermes")
+    if slack.get("enabled"):
+        arguments.extend(["--provider", slack["providerName"]])
     # Inference credentials remain gateway-side. The provider is selected by
     # `openshell inference set` and reached through inference.local; attaching
     # it here would expose or withhold provider credentials as sandbox env.
@@ -533,6 +561,9 @@ def create_sandbox() -> None:
         "NEMOCLAW_CONTEXT_WINDOW": str(CONFIG["model"]["contextWindow"]),
         **CONFIG["agentEnv"],
     }
+    if slack.get("enabled"):
+        runtime_env["SLACK_ALLOWED_USERS"] = ",".join(slack["allowedUsers"])
+        runtime_env["SLACK_ALLOWED_CHANNELS"] = ",".join(slack["allowedChannels"])
     for key, value in sorted(runtime_env.items()):
         arguments.extend(["--env", f"{key}={value}"])
     # The managed image ships /sandbox and /sandbox/.hermes with set-id modes
@@ -550,6 +581,12 @@ def create_sandbox() -> None:
         "/usr/bin/chmod u=rwx,g=,o=,g-s,o-t /sandbox/.hermes && "
         "exec /usr/local/bin/nemoclaw-start"
     )
+    if runtime != "hermes" or slack.get("enabled") or not CONFIG["agentImage"].startswith("ghcr.io/nvidia/nemoclaw/hermes-sandbox@sha256:"):
+        source = Path("/runtime/prepare_agent.py").read_text()
+        interpreter = "/opt/hermes/.venv/bin/python" if runtime == "hermes" else "/usr/bin/python3"
+        # Non-secret allowlists only. Credentials are revision-bound placeholders.
+        command = [interpreter, "-c", source, runtime, json.dumps(slack), json.dumps(CONFIG["model"])]
+        startup = "set -eu; " + shlex.join(command) + "; exec /usr/local/bin/nemoclaw-start"
     arguments.extend(["--", "/bin/sh", "-c", startup])
     run(arguments)
 
@@ -579,6 +616,7 @@ def main() -> None:
     # and require explicit administrator cleanup rather than claiming it based
     # only on the presence of a same-named Sandbox.
     reconcile_provider(provider_exists)
+    reconcile_slack_provider()
     if not existing_sandbox:
         create_sandbox()
         print(f"created sandbox {CONFIG['sandboxName']} from immutable image {CONFIG['agentImage']}")

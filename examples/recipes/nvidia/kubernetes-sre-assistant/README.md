@@ -90,8 +90,8 @@ seed Job ── sre plugin: verify skill bundle, stage oc/kubectl, write kubecon
   by node architecture and verified against pinned SHA-256 checksums
 - Helper image: immutable multi-architecture Python digest for the proxies and
   the client stager; the recipe builds no image
-- Skill bundle: one deterministic xz/tar archive of the two NVIDIA-authored
-  skill trees, split into size-bounded ConfigMap chunks; its digest is pinned
+- Skill bundle: one deterministic xz/tar archive of the three NVIDIA-authored
+  skill trees (storage installation is opt-in), split into size-bounded ConfigMap chunks; its digest is pinned
   in `values.yaml` (`global.sre.bundle.sha256`) and joins the Sandbox
   configuration identity
 
@@ -378,6 +378,53 @@ further and omits them from the prompt entirely. A model-suggested pod name is
 honoured only when it belongs to the failing workload, so text inside a
 container's logs cannot redirect a restart to another pod.
 
+## Read-only storage investigations (opt-in)
+
+```yaml
+global:
+  sre:
+    storageDiagnostics:
+      enabled: true
+```
+
+This installs the first-party `kubernetes-storage` skill for either managed
+Hermes or OpenClaw. It uses the existing authenticated SRE proxy and kubeconfig;
+enabling it grants only the additional StorageClass/CephCluster metadata reads
+needed in `safe` and `read-only` modes. It does not enable autoheal, PVC
+expansion, node/guest execution, filesystem repair, or new write permissions.
+The skill is read-only even when the separate chat proxy uses a write-capable mode.
+
+Example inside an OpenClaw sandbox:
+
+```bash
+/usr/bin/python3 /sandbox/.openclaw/workspace/skills/kubernetes-storage/scripts/diagnose-storage.py \
+  --namespace tenant-app --pvc data --ceph-namespace openshift-storage
+```
+
+Hermes uses `/opt/hermes/.venv/bin/python` and the corresponding script below
+`/sandbox/.hermes/skills`. Namespace is mandatory; PVC is optional. Namespace
+inventory defaults to 20 claims, with a maximum of 100. Over-limit collections,
+missing claims, denied APIs, and unavailable evidence cannot produce a green
+result. Exit codes are 0 for completed collection (inspect `state`), 1 for
+unhealthy evidence, and 2 for incomplete/unverified collection.
+
+Evidence covers PVC/PV UID binding, StorageClass behavior and expansion support,
+consumer pods, resize conditions, exact-PVC events and optional last-reported
+Ceph health. A Bound claim does not prove application I/O, and allocated capacity
+is never represented as filesystem usage or free space. Follow the skill's
+scope, evidence, hypothesis and human-approval workflow before proposing repairs.
+Disabling the feature removes only its chart-owned skill during an acknowledged
+re-seed/recreation; existing user workspace content remains.
+
+### Scope and licensing
+
+This first-party Kubernetes/ODF implementation uses bounded evidence collection,
+separates diagnosis from action, classifies action scope and approval needs, and
+requires verification after any separately authorized repair. Private skill
+content, knowledge graphs, telemetry profiles and credentials are not bundled.
+It does not install an external storage telemetry stack, change the runtime
+image, or enable an additional agent policy engine.
+
 ## Skill bundle and seeding
 
 Hermes integrations must preserve their policy-managed proxy and CA settings
@@ -572,3 +619,22 @@ See this recipe's [third-party notices](THIRD-PARTY-NOTICES), the deployer's
 [third-party notices](../../../tools/kubernetes-deployer/THIRD-PARTY-NOTICES),
 and the repository [third-party notices](../../../../THIRD-PARTY-NOTICES) for
 upstream licenses, versions, immutable artifacts, and local modifications.
+
+## Optional OpenClaw and Slack
+
+See the [OpenShift validation results](docs/openclaw-validation.md) for tested
+runtime, tool execution, workspace retention, Slack delivery, and current limits.
+
+See [runtime selection and Slack onboarding](docs/slack-openclaw.md). Hermes remains the default; native Slack chat and outgoing alerts are independent opt-ins. Slack chat defaults to a GET-only proxy and read-only Kubernetes RBAC. The explicit
+`values-slack-remediation.example.yaml` overlay enables requested changes through
+the acknowledged no-delete API path and daily infrastructure/Hugging Face Slack
+reports. See the linked guide for the boundaries, RCA workflow, and delivery checks.
+
+
+The optional `values-slack-remediation.example.yaml` overlay enables protected
+advanced interactive access and the model-deploy skill. Authorized Slack users
+can request application workload changes and named deletions; core namespaces,
+cluster-scoped mutations/CRDs, Secret data, credential/RBAC operations, and PVC
+deletion remain blocked. See [Slack workflow and boundaries](docs/slack-openclaw.md#hugging-face-report-thread-to-deployment).
+Model plans still require approval after preflight. Autonomous autoheal has its
+own policy and remains observe/dry-run in this overlay.

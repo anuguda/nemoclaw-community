@@ -136,6 +136,68 @@ def exact_delete_allowlist() -> set[tuple[str, str, str]]:
     return allowed
 
 
+# The protected advanced policy permits only namespaced application APIs.
+# RBAC is additive and cannot exclude system namespaces; enforce that boundary
+# here, before forwarding with the proxy identity. No collection DELETEs.
+APPLICATION_RESOURCES = {
+    "": {"pods", "services", "configmaps", "persistentvolumeclaims"},
+    "apps": {"deployments", "statefulsets", "daemonsets", "replicasets"},
+    "batch": {"jobs", "cronjobs"},
+    "networking.k8s.io": {"ingresses", "networkpolicies"},
+    "route.openshift.io": {"routes"},
+    "autoscaling": {"horizontalpodautoscalers"},
+    "policy": {"poddisruptionbudgets"},
+    "nvidia.com": {"dynamographdeployments"},
+    "serving.kserve.io": {"inferenceservices", "servingruntimes"},
+    "nim.opendatahub.io": {"nimservices", "nimcaches", "nimpipelines"},
+}
+
+
+def protected_namespace(namespace: str | None) -> bool:
+    extra = os.environ.get("PROXY_PROTECTED_NAMESPACES", "").split(",")
+    return bool(
+        not namespace or namespace in {"default", "kube", "openshift", "etcd", *extra}
+        or namespace.startswith(("kube-", "openshift-", "etcd-", "trustee-"))
+    )
+
+
+def secret_existence_target(target: str, method: str) -> bool:
+    """One configured HF reference can be checked, never read or watched."""
+    parsed = resource_target(target)
+    if not parsed or method != "GET" or urlsplit(target).query or "/watch/" in target:
+        return False
+    group, namespace, resource, name, subresource, tail = parsed
+    return bool(group == "" and resource == "secrets" and name
+                and namespace == os.environ.get("PROXY_HF_SECRET_NAMESPACE")
+                and name == os.environ.get("PROXY_HF_SECRET_NAME")
+                and not subresource and not tail)
+
+
+def secret_existence_response(target: str) -> bytes:
+    # Construct from the validated target, never from upstream Secret data,
+    # labels or annotations (which may themselves contain credentials).
+    _, namespace, _, name, _, _ = resource_target(target)
+    return json.dumps({"apiVersion": "v1", "kind": "Secret",
+                       "metadata": {"name": name, "namespace": namespace}}).encode()
+
+
+def application_write_allowed(parsed, method: str) -> bool:
+    group, namespace, resource, name, subresource, tail = parsed
+    if protected_namespace(namespace) or resource not in APPLICATION_RESOURCES.get(group, set()):
+        return False
+    if group == "" and resource == "services" and subresource == "proxy":
+        return bool(method == "POST" and namespace == os.environ.get("PROXY_SERVICE_PROXY_NAMESPACE")
+                    and name and re.fullmatch(r"http:[a-z0-9][a-z0-9-]*:8000", name)
+                    and tail == ("v1", "chat", "completions"))
+    if tail or (subresource and not (group == "apps" and resource in {"deployments", "statefulsets"} and subresource == "scale")):
+        return False
+    if name in {"kubernetes", "kube-root-ca.crt", "openshift-service-ca.crt"}:
+        return False
+    if method == "DELETE":
+        return bool(name and not subresource and resource != "persistentvolumeclaims")
+    return method in {"POST", "PUT", "PATCH"}
+
+
 def request_allowed(target: str, method: str, policy: str) -> bool:
     """Enforce proxy-specific restrictions beyond Kubernetes RBAC."""
     try:
@@ -163,13 +225,23 @@ def request_allowed(target: str, method: str, policy: str) -> bool:
             and not tail
             and (api_group, resource, name) in exact_delete_allowlist()
         )
-    if policy != "general":
+    if policy not in {"general", "protected-advanced"}:
+        return False
+    if policy == "protected-advanced" and method != "GET":
+        return bool(parsed and application_write_allowed(parsed, method))
+    if method not in {"GET", "POST", "PUT", "PATCH"}:
         return False
     if parsed is None:
         return method == "GET"
     _api_group, namespace, resource, _name, subresource, _tail = parsed
-    if resource == "secrets":
+    # Broad workload remediation does not grant a route around this proxy.
+    if method != "GET" and _api_group in {
+        "rbac.authorization.k8s.io", "authorization.k8s.io",
+        "authentication.k8s.io", "certificates.k8s.io",
+    }:
         return False
+    if resource == "secrets":
+        return secret_existence_target(target, method)
     if resource == "serviceaccounts" and subresource == "token":
         return False
     if resource == "pods" and subresource in {
@@ -305,6 +377,9 @@ class ProxyHandler(BaseHTTPRequestHandler):
             "Authorization": f"Bearer {service_account_token}",
             "Accept": self.headers.get("Accept", "application/json"),
         }
+        metadata_only = secret_existence_target(target, self.command)
+        if metadata_only:
+            headers["Accept"] = "application/json;as=PartialObjectMetadata;g=meta.k8s.io;v=v1"
         if self.headers.get("Content-Type"):
             headers["Content-Type"] = self.headers["Content-Type"]
         if policy == "exact-service-proxy":
@@ -331,6 +406,12 @@ class ProxyHandler(BaseHTTPRequestHandler):
             return
 
         with upstream:
+            if metadata_only:
+                if upstream.status == 200:
+                    self.send_payload(200, secret_existence_response(target))
+                else:
+                    self.reject(upstream.status, "credential_reference_unavailable")
+                return
             payload = upstream.read(maximum_response + 1)
             if len(payload) > maximum_response:
                 self.reject(502, "upstream_response_too_large")

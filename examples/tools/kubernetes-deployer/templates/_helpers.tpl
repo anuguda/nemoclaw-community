@@ -345,6 +345,14 @@ umbrella chart can reference {{ .Release.Namespace }} in proxy host names.
 */ -}}
 {{- define "nemoclaw-openshell.policy" -}}
 {{- $policy := .Files.Get "files/policy.yaml" | fromYaml -}}
+{{- if eq .Values.agent.runtime "openclaw" -}}
+{{- $net := index $policy "network_policies" -}}
+{{- $_ := unset $net "nous_research" -}}
+{{- range $key := list "managed_inference" "nvidia" -}}
+{{- $_ := set (index $net $key) "binaries" (list (dict "path" "/usr/local/bin/node") (dict "path" "/usr/bin/node")) -}}
+{{- end -}}
+{{- $_ := set (index $policy "filesystem_policy") "read_only" (concat (without (index $policy "filesystem_policy" "read_only") "/opt/hermes") (list "/scripts" "/src" "/opt/nemoclaw-blueprint/model-specific-setup")) -}}
+{{- end -}}
 {{- $filesystem := index $policy "filesystem_policy" -}}
 {{- $readOnly := list -}}
 {{- range $path := (index $filesystem "read_only") -}}
@@ -369,6 +377,13 @@ umbrella chart can reference {{ .Release.Namespace }} in proxy host names.
   {{- end -}}
   {{- $_ := set $networkPolicies $name $definition -}}
 {{- end -}}
+{{- if .Values.agent.slack.enabled -}}
+{{- if hasKey $networkPolicies "slack" -}}{{- fail "policy.networkPolicies.slack is managed by agent.slack" -}}{{- end -}}
+{{- $profile := include "nemoclaw-openshell.slackProvider" . | fromYaml -}}
+{{- $bins := list -}}
+{{- range $bin := $profile.binaries -}}{{- $bins = append $bins (dict "path" $bin) -}}{{- end -}}
+{{- $_ := set $networkPolicies "slack" (dict "name" "slack" "endpoints" $profile.endpoints "binaries" $bins) -}}
+{{- end -}}
 {{- $_ := set $policy "network_policies" $networkPolicies -}}
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
@@ -376,4 +391,41 @@ umbrella chart can reference {{ .Release.Namespace }} in proxy host names.
 # Sandbox policy for the Hermes Agent, synchronized from NemoClaw v0.0.117 and
 # extended with this release's policy.readOnlyPaths and policy.networkPolicies.
 {{ toYaml $policy }}
+{{- end -}}
+
+{{- /* Release-scoped provider; real credentials remain in OpenShell. */ -}}
+{{- define "nemoclaw-openshell.slackProviderName" -}}
+{{- printf "%s-%s-slack-v1" (include "nemoclaw-openshell.providerName" .) .Values.agent.runtime -}}
+{{- end -}}
+{{- define "nemoclaw-openshell.slackProvider" -}}
+id: {{ include "nemoclaw-openshell.slackProviderName" . }}
+display_name: SRE Slack
+description: Native Slack Socket Mode credentials held by OpenShell
+category: messaging
+credentials:
+  - name: bot_token
+    env_vars: [SLACK_BOT_TOKEN]
+    required: true
+    auth_style: bearer
+    header_name: authorization
+  - name: app_token
+    env_vars: [SLACK_APP_TOKEN]
+    required: true
+    auth_style: bearer
+    header_name: authorization
+endpoints:
+  - {host: slack.com, port: 443, protocol: rest, access: read-write, enforcement: enforce}
+  - {host: api.slack.com, port: 443, protocol: rest, access: read-write, enforcement: enforce}
+  - {host: wss-primary.slack.com, port: 443, protocol: rest, access: full, enforcement: enforce}
+  - {host: wss-backup.slack.com, port: 443, protocol: rest, access: full, enforcement: enforce}
+binaries:
+{{- if eq .Values.agent.runtime "openclaw" }}
+  - /usr/local/bin/node
+  - /usr/bin/node
+{{- else }}
+  - /opt/hermes/.venv/bin/python
+  - /opt/hermes/.venv/bin/hermes
+  - /usr/local/bin/hermes
+  - /usr/bin/python3
+{{- end }}
 {{- end -}}

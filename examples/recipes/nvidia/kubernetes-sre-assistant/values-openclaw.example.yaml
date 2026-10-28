@@ -1,0 +1,13 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Add after the platform overlay (and Slack overlay, when used).
+# Official NemoClaw v0.0.130; no build or registry push required.
+deployer:
+  agent:
+    runtime: openclaw
+    image:
+      multiarch: ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:0cc9a96c065f02bf0c483bc74bd23f9b3ffec538f49557c77b1dafd73d9e0480
+  access:
+    enabled: false
+  operatorClient:
+    enabled: true

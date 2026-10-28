@@ -1,5 +1,25 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+{{- $runtime := .Values.agent.runtime -}}
+{{- $expectedImage := printf "ghcr.io/nvidia/nemoclaw/%s-sandbox@sha256:" $runtime -}}
+{{- if and (not (hasPrefix $expectedImage .Values.agent.image.multiarch)) (ne .Values.agent.image.customAcknowledgement "I_ACKNOWLEDGE_REVIEWED_MANAGED_IMAGE") -}}
+{{- fail "runtime image must match agent.runtime; custom images require agent.image.customAcknowledgement=I_ACKNOWLEDGE_REVIEWED_MANAGED_IMAGE" -}}
+{{- end -}}
+{{- if and (eq $runtime "openclaw") .Values.access.enabled -}}
+{{- fail "OpenClaw currently requires access.enabled=false; the Hermes dashboard/API relay is not an OpenClaw relay" -}}
+{{- end -}}
+{{- $slack := .Values.agent.slack -}}
+{{- if $slack.enabled -}}
+{{- if or (not $slack.allowedUsers) (not $slack.allowedChannels) (not $slack.secretRef.name) -}}
+{{- fail "Slack requires nonempty allowedUsers, allowedChannels, and secretRef.name" -}}
+{{- end -}}
+{{- if ne .Values.openshell.mode "managed" -}}
+{{- fail "Slack lifecycle currently requires a release-owned managed OpenShell gateway" -}}
+{{- end -}}
+{{- if eq $slack.secretRef.botTokenKey $slack.secretRef.appTokenKey -}}
+{{- fail "Slack botTokenKey and appTokenKey must be distinct" -}}
+{{- end -}}
+{{- end -}}
 {{- $openshift := .Values.platform.openshift -}}
 {{- if and .Release.IsUpgrade .Values.lifecycle.seed.runOnUpgrade (ne .Values.lifecycle.seed.dangerousAcknowledgement "I_ACKNOWLEDGE_SANDBOX_STOPPED") -}}
 {{- fail "lifecycle.seed.dangerousAcknowledgement must equal I_ACKNOWLEDGE_SANDBOX_STOPPED before remounting the Hermes PVC during an upgrade" -}}
@@ -256,7 +276,7 @@ to satisfy the same rule.
   {{- if regexMatch "(?i)(secret|token|password|credential|api.?key)" $name -}}
   {{- fail (printf "agent.env.%s looks secret-bearing; use agent.model.apiKeySecretRef or a dedicated Secret reference" $name) -}}
   {{- end -}}
-  {{- if has $name (list "NEMOCLAW_SANDBOX_NAME" "NEMOCLAW_MODEL" "NEMOCLAW_INFERENCE_PROVIDER_ID" "NEMOCLAW_UPSTREAM_PROVIDER" "NEMOCLAW_INFERENCE_BASE_URL" "NEMOCLAW_INFERENCE_API" "NEMOCLAW_CONTEXT_WINDOW" "CHAT_UI_URL" "NEMOCLAW_DASHBOARD_PORT" "NEMOCLAW_HERMES_API_PORT") -}}
+  {{- if has $name (list "NEMOCLAW_SANDBOX_NAME" "NEMOCLAW_MODEL" "NEMOCLAW_INFERENCE_PROVIDER_ID" "NEMOCLAW_UPSTREAM_PROVIDER" "NEMOCLAW_INFERENCE_BASE_URL" "NEMOCLAW_INFERENCE_API" "NEMOCLAW_CONTEXT_WINDOW" "NEMOCLAW_MESSAGING_PLAN_B64" "NEMOCLAW_MESSAGING_RUNTIME_PLAN_PATH" "SLACK_ALLOWED_USERS" "SLACK_ALLOWED_CHANNELS" "CHAT_UI_URL" "NEMOCLAW_DASHBOARD_PORT" "NEMOCLAW_HERMES_API_PORT") -}}
   {{- fail (printf "agent.env.%s is chart-managed; use its dedicated values field" $name) -}}
   {{- end -}}
   {{- /* NemoClaw's environment boundary validator refuses these name segments at sandbox startup. */ -}}
@@ -265,7 +285,7 @@ to satisfy the same rule.
   {{- end -}}
 {{- end -}}
 {{- /* Extension points consumed by skill recipes that layer on this chart. */ -}}
-{{- $reservedMountPaths := list "/sandbox" "/sandbox/.hermes" "/sandbox/workspace" "/sandbox/.nemoclaw" "/chart-runtime" -}}
+{{- $reservedMountPaths := list "/sandbox" "/sandbox/.hermes" "/sandbox/.openclaw" "/sandbox/.openclaw/workspace" "/sandbox/workspace" "/sandbox/.nemoclaw" "/chart-runtime" -}}
 {{- $seenMountPaths := list -}}
 {{- $seenSubPaths := list -}}
 {{- range $mount := include "nemoclaw-openshell.extraStateMounts" . | fromYamlArray -}}

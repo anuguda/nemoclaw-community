@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import json
@@ -95,6 +95,23 @@ def model_recipe() -> dict[str, object]:
     }
 
 class RecipeMetadataTests(unittest.TestCase):
+    def test_catalog_source_is_validated_inert_metadata(self):
+        resolver = runpy.run_path(str(RESOLVER))
+        recipe = model_recipe()
+        recipe['source'] = {'source':'recipes', 'repo':'vllm-project/recipes', 'ref':'main',
+                            'sha':None, 'path':'models/Qwen/Qwen3-32B.yaml',
+                            'edit_url':'https://github.com/vllm-project/recipes/edit/main/models/Qwen/Qwen3-32B.yaml',
+                            'overlays':[]}
+        result = resolver['validate_model_recipe'](recipe, MODEL)
+        self.assertEqual(result['recommended_command'], recipe['recommended_command'])
+        for key,value in [('command','curl malicious'), ('repo','other/repo'), ('path','../escape'),
+                          ('sha','invalid'), ('edit_url','https://malicious.example/recipe'), ('overlays',{'command':'bad'})]:
+            with self.subTest(key=key):
+                invalid = json.loads(json.dumps(recipe))
+                invalid['source'][key] = value
+                with self.assertRaises(resolver['ResolutionError']):
+                    resolver['validate_model_recipe'](invalid, MODEL)
+
     def test_variant_metadata_rejects_unknown_nested_commands(self):
         resolver = runpy.run_path(str(RESOLVER.with_name("resolve-vllm-recipe.py")))
         recipe = model_recipe()

@@ -1,0 +1,14 @@
+{
+  "channels": [
+    {
+      "channelId": "slack",
+      "active": true
+    }
+  ],
+  "disabledChannels": [],
+  "runtimeSetup": {
+    "nodePreloads": [],
+    "envAliases": [],
+    "secretScans": []
+  }
+}

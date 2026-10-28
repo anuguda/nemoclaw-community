@@ -1,0 +1,50 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Overlay AFTER values-openshift.yaml or values-kubernetes.yaml.
+# Supply a reviewed Slack-capable managed image by digest on the command line.
+# Replace placeholder user/channel IDs with your own before deployment.
+global:
+  sre:
+    rbac:
+      mode: read-only
+    openshiftLlmDeploy:
+      enabled: false
+      deletion:
+        enabled: false
+      metrics:
+        enabled: false
+deployer:
+  agent:
+    runtime: hermes
+    image:
+      multiarch: ghcr.io/nvidia/nemoclaw/hermes-sandbox@sha256:962a2c907e6471efbc322ee3298620e55aa902406ae341704ec19b4b150ad7ad
+    slack:
+      enabled: true
+      responseStyle: incident-summary
+      allowedUsers: [U0123456789]
+      allowedChannels: [C0123456789]
+      secretRef:
+        name: sre-slack
+        botTokenKey: bot-token
+        appTokenKey: app-token
+  # Keep the first Slack canary isolated from the browser/API access surfaces.
+  access:
+    enabled: false
+  operatorClient:
+    enabled: true
+autoheal:
+  enabled: true
+  agentConfig:
+    policy:
+      mode: observe
+      dry_run: true
+  # Optional: configure the diagnostic model separately to enable LLM triage.
+  llm:
+    enabled: false
+  notifications:
+    slack:
+      enabled: true
+      channel: C0123456789
+      secret:
+        name: sre-slack
+        botTokenKey: bot-token

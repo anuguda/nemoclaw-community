@@ -18,7 +18,7 @@ global:
       # and the ordered ConfigMap chunk names (files/sre-skills.parts.json).
       # scripts/build-sre-skills-bundle.py rewrites both; rendering fails when
       # they disagree with the committed files.
-      sha256: 9854a4ba7227ea19c29391bd1ebf03939cb460f0d5bb97f31f5d8877680534c2
+      sha256: 9adceb32ed26393ee017cc6ee3e427c2da7e6b9a4908c88d9572c53fbe79c1d0
       parts:
         - sre-skills.part-000
     # Immutable multi-architecture Python image for the API proxies and the
@@ -34,10 +34,28 @@ global:
       arm64:
         url: https://mirror.openshift.com/pub/openshift-v4/arm64/clients/ocp/4.20.38/openshift-client-linux.tar.gz
         sha256: d3d49702e1d485a614545de69c7c68f95253835f9915728d8b4e4e50b91d1ecf
+    slackRemediation:
+      # Explicitly opt in before allowing Slack-requested workload changes.
+      enabled: false
+    storageDiagnostics:
+      # Optional read-only PVC/PV, StorageClass and Ceph metadata diagnosis.
+      # Independent of autoheal storage expansion and external Lustre telemetry.
+      enabled: false
+    reports:
+      enabled: false
+      # Infrastructure and Hugging Face have separate native cron schedules.
+      schedule: "30 9 * * *"
+      huggingFaceSchedule: "35 9 * * *"
+      timeZone: America/Los_Angeles
+      channel: ""
+      topN: 10
     rbac:
+      # read-only: GET-only proxy and RBAC; default for Slack chat.
       # safe: read common non-secret resources cluster-wide and scale only
       # Deployments/StatefulSets. Full workload patches are intentionally denied.
       # broad-no-delete: all API groups/resources/verbs except delete operations.
+      # protected-advanced: named application writes/deletes; protected core namespaces,
+      # cluster-scoped mutations and PVC deletion are denied by the API proxy.
       mode: safe
       dangerousAcknowledgement: ""
     proxy:

@@ -16,10 +16,59 @@ metadata:
   labels:
     {{- include "sre-assistant.labels" . | nindent 4 }}
   annotations:
-    nemoclaw.nvidia.com/delete-access: "false"
+    nemoclaw.nvidia.com/delete-access: {{ ternary "application-workloads-only" "false" (eq .Values.global.sre.rbac.mode "protected-advanced") | quote }}
     nemoclaw.nvidia.com/rbac-mode: {{ .Values.global.sre.rbac.mode | quote }}
 rules:
-  {{- if eq .Values.global.sre.rbac.mode "broad-no-delete" }}
+  {{- if eq .Values.global.sre.rbac.mode "protected-advanced" }}
+  # Proxy enforces namespace/resource exclusions; RBAC adds no cluster writes,
+  # credentials, exec, deletecollection, or persistent volume deletion.
+  - apiGroups: ["*"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+  {{- if .Values.global.sre.openshiftLlmDeploy.enabled }}
+  - apiGroups: [""]
+    resources: ["services/proxy"]
+    verbs: ["create"]
+  {{- end }}
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["create", "patch", "update"]
+  - apiGroups: [""]
+    resources: ["pods", "services", "configmaps"]
+    verbs: ["create", "patch", "update", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "daemonsets", "replicasets"]
+    verbs: ["create", "patch", "update", "delete"]
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["create", "patch", "update", "delete"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses", "networkpolicies"]
+    verbs: ["create", "patch", "update", "delete"]
+  - apiGroups: ["route.openshift.io"]
+    resources: ["routes"]
+    verbs: ["create", "patch", "update", "delete"]
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["create", "patch", "update", "delete"]
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets"]
+    verbs: ["create", "patch", "update", "delete"]
+  - apiGroups: ["nvidia.com"]
+    resources: ["dynamographdeployments"]
+    verbs: ["create", "patch", "update", "delete"]
+  - apiGroups: ["serving.kserve.io"]
+    resources: ["inferenceservices", "servingruntimes"]
+    verbs: ["create", "patch", "update", "delete"]
+  - apiGroups: ["nim.opendatahub.io"]
+    resources: ["nimservices", "nimcaches", "nimpipelines"]
+    verbs: ["create", "patch", "update", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["deployments/scale", "statefulsets/scale"]
+    verbs: ["patch", "update"]
+  - nonResourceURLs: ["/healthz", "/livez", "/readyz", "/version", "/apis", "/apis/*", "/api", "/api/*"]
+    verbs: ["get"]
+  {{- else if eq .Values.global.sre.rbac.mode "broad-no-delete" }}
   # High-risk opt-in. Explicit enumeration intentionally excludes delete,
   # deletecollection, bind, escalate, impersonate, approve, sign, and use.
   - apiGroups: ["*"]
@@ -46,11 +95,13 @@ rules:
   - apiGroups: ["apps"]
     resources: ["deployments", "statefulsets", "daemonsets", "replicasets"]
     verbs: ["get", "list", "watch"]
+  {{- if ne .Values.global.sre.rbac.mode "read-only" }}
   # Safe mutations are restricted to scale subresources. Full controller
   # patches can replace images, commands, or ServiceAccounts and are excluded.
   - apiGroups: ["apps"]
     resources: ["deployments/scale", "statefulsets/scale"]
     verbs: ["get", "patch", "update"]
+  {{- end }}
   - apiGroups: ["batch"]
     resources: ["jobs", "cronjobs"]
     verbs: ["get", "list", "watch"]
@@ -75,6 +126,22 @@ rules:
   - apiGroups: ["metrics.k8s.io"]
     resources: ["nodes", "pods"]
     verbs: ["get", "list"]
+  {{- if or .Values.global.sre.reports.enabled .Values.global.sre.storageDiagnostics.enabled }}
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["ceph.rook.io"]
+    resources: ["cephclusters"]
+    verbs: ["get", "list", "watch"]
+  {{- end }}
+  {{- if .Values.global.sre.reports.enabled }}
+  - apiGroups: ["nvidia.com"]
+    resources: ["dynamographdeployments"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["agents.x-k8s.io"]
+    resources: ["sandboxes"]
+    verbs: ["get", "list", "watch"]
+  {{- end }}
   - nonResourceURLs: ["/healthz", "/livez", "/readyz", "/version", "/apis", "/apis/*", "/api", "/api/*"]
     verbs: ["get"]
   {{- end }}

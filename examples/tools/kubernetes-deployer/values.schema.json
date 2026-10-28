@@ -68,7 +68,7 @@
           "properties": {
             "multiarch": {
               "type": "string",
-              "pattern": "^ghcr\\.io/nvidia/nemoclaw/hermes-sandbox@sha256:[a-f0-9]{64}$"
+              "pattern": "^(ghcr\\.io|nvcr\\.io|docker\\.io|quay\\.io)/[^\\s@]+@sha256:[a-f0-9]{64}$"
             },
             "pullPolicy": {
               "type": "string",
@@ -77,6 +77,9 @@
                 "Always",
                 "Never"
               ]
+            },
+            "customAcknowledgement": {
+              "type": "string"
             }
           },
           "required": [
@@ -276,6 +279,72 @@
         "envTemplate": {
           "type": "string",
           "maxLength": 65536
+        },
+        "runtime": {
+          "type": "string",
+          "enum": [
+            "hermes",
+            "openclaw"
+          ]
+        },
+        "slack": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "enabled",
+            "allowedUsers",
+            "allowedChannels",
+            "secretRef"
+          ],
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "allowedUsers": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "pattern": "^[UW][A-Z0-9]+$"
+              }
+            },
+            "allowedChannels": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "pattern": "^[CG][A-Z0-9]+$"
+              }
+            },
+            "secretRef": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "name",
+                "botTokenKey",
+                "appTokenKey"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "botTokenKey": {
+                  "type": "string"
+                },
+                "appTokenKey": {
+                  "type": "string"
+                }
+              }
+            },
+            "responseStyle": {
+              "type": "string",
+              "enum": [
+                "standard",
+                "incident-summary"
+              ],
+              "default": "standard"
+            }
+          }
         }
       },
       "required": [

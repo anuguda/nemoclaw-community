@@ -501,6 +501,16 @@ Project: NVIDIA/NemoClaw source and sandbox base image
 License: Apache-2.0 and included component licenses
 URL: https://github.com/NVIDIA/NemoClaw
 
+Project: OpenClaw (optional NemoClaw-managed runtime)
+License: MIT and included dependency licenses
+URL: https://github.com/openclaw/openclaw
+Notes: Referenced through an official NemoClaw image; runtime source is not vendored here.
+
+Package: @slack/web-api (Node Slack SDK)
+License: MIT
+URL: https://github.com/slackapi/node-slack-sdk
+Notes: Included in the optional managed chat image; the runtime preparation applies a version- and checksum-checked compatibility patch.
+
 Project: Kubernetes SIG Agent Sandbox controller and API
 License: Apache-2.0
 URL: https://github.com/kubernetes-sigs/agent-sandbox

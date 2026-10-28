@@ -12,6 +12,9 @@ shared release. Each template emits YAML for exactly one extension point.
 {{- define "sre-assistant.agentEnv" -}}
 {{- $sre := .Values.global.sre -}}
 KUBERNETES_SRE_ENDPOINT: {{ include "sre-assistant.proxyEndpoint" (dict "root" . "name" (include "sre-assistant.proxyName" .)) | quote }}
+SRE_ACCESS_MODE: {{ $sre.rbac.mode | quote }}
+SRE_REPORTS_CONFIG: {{ $sre.reports | toJson | quote }}
+SRE_STORAGE_DIAGNOSTICS_ENABLED: {{ $sre.storageDiagnostics.enabled | quote }}
 KUBECONFIG: /sandbox/.hermes/sre-kubeconfig
 SRE_KUBECONFIG: /sandbox/.hermes/sre-kubeconfig
 {{- if $sre.openshiftLlmDeploy.enabled }}
@@ -36,20 +39,31 @@ MODEL_DELETE_KUBECONFIG: /sandbox/.hermes/model-delete-kubeconfig
 {{- /* agent.extraStateMounts: read-only subpaths the seed plugin populates. */ -}}
 {{- define "sre-assistant.extraStateMounts" -}}
 {{- $sre := .Values.global.sre -}}
-- mountPath: /sandbox/.hermes/skills/kubernetes-sre
+- mountPath: {{ ternary "/sandbox/.openclaw/workspace/skills/kubernetes-sre" "/sandbox/.hermes/skills/kubernetes-sre" (eq .Values.agent.runtime "openclaw") }}
   subPath: hermes/skills/kubernetes-sre
   readOnly: true
+{{- if $sre.storageDiagnostics.enabled }}
+- mountPath: {{ ternary "/sandbox/.openclaw/workspace/skills/kubernetes-storage" "/sandbox/.hermes/skills/kubernetes-storage" (eq .Values.agent.runtime "openclaw") }}
+  subPath: hermes/skills/kubernetes-storage
+  readOnly: true
+{{- end }}
 - mountPath: /sandbox/.hermes/.sre-proxy-token
   subPath: hermes/.sre-proxy-token
   readOnly: true
 - mountPath: /sandbox/.hermes/sre-kubeconfig
   subPath: hermes/sre-kubeconfig
   readOnly: true
+- mountPath: /sandbox/.sre-reports
+  subPath: hermes/reports-runtime
+  readOnly: true
+- mountPath: /sandbox/.agent-tool-config.py
+  subPath: hermes/reports-runtime/prepare_tools.py
+  readOnly: true
 - mountPath: /chart-bin
   subPath: hermes/bin
   readOnly: true
 {{- if $sre.openshiftLlmDeploy.enabled }}
-- mountPath: /sandbox/.hermes/skills/openshift-llm-deploy
+- mountPath: {{ ternary "/sandbox/.openclaw/workspace/skills/openshift-llm-deploy" "/sandbox/.hermes/skills/openshift-llm-deploy" (eq .Values.agent.runtime "openclaw") }}
   subPath: hermes/skills/openshift-llm-deploy
   readOnly: true
 {{- if $sre.openshiftLlmDeploy.deletion.enabled }}
@@ -80,10 +94,15 @@ kubernetes_sre:
       enforcement: enforce
       rules:
         - allow: { method: GET, path: "/**" }
+        {{- if ne $sre.rbac.mode "read-only" }}
         - allow: { method: PATCH, path: "/**" }
-        {{- if eq $sre.rbac.mode "broad-no-delete" }}
+        {{- end }}
+        {{- if has $sre.rbac.mode (list "broad-no-delete" "protected-advanced") }}
         - allow: { method: POST, path: "/**" }
         - allow: { method: PUT, path: "/**" }
+        {{- end }}
+        {{- if eq $sre.rbac.mode "protected-advanced" }}
+        - allow: { method: DELETE, path: "/**" }
         {{- end }}
   binaries:
     - { path: /usr/bin/curl }
@@ -127,7 +146,7 @@ cluster_metrics:
     - { path: /chart-bin/oc }
     - { path: /chart-bin/kubectl }
 {{- end }}
-{{- if $sre.openshiftLlmDeploy.enabled }}
+{{- if or $sre.openshiftLlmDeploy.enabled $sre.reports.enabled }}
 huggingface_metadata:
   name: huggingface_metadata
   endpoints:
@@ -136,6 +155,7 @@ huggingface_metadata:
       protocol: rest
       enforcement: enforce
       rules:
+        - allow: { method: GET, path: "/api/models" }
         - allow: { method: GET, path: "/api/models/**" }
         - allow: { method: GET, path: "/api/resolve-cache/models/**" }
   binaries:
@@ -143,6 +163,8 @@ huggingface_metadata:
     - { path: /usr/local/bin/curl }
     - { path: /usr/bin/python3* }
     - { path: /opt/hermes/.venv/bin/python }
+{{- end }}
+{{- if $sre.openshiftLlmDeploy.enabled }}
 vllm_recipe_metadata:
   name: vllm_recipe_metadata
   endpoints:
@@ -204,12 +226,18 @@ model_release_metadata:
   configMapName: {{ include "sre-assistant.runtimeConfigMapName" . | quote }}
   entrypoint: seed_sre.py
   # The reviewed skill archive digest joins the sandbox configuration identity.
-  identity: {{ $sre.bundle.sha256 | quote }}
+  identity: {{ dict "bundle" $sre.bundle.sha256 "reports" $sre.reports "storageDiagnostics" $sre.storageDiagnostics | toJson | sha256sum | quote }}
   env:
     - name: SRE_PROXY_ENDPOINT
       value: {{ include "sre-assistant.proxyEndpoint" (dict "root" . "name" (include "sre-assistant.proxyName" .)) | quote }}
     - name: RELEASE_NAMESPACE
       value: {{ ternary (include "sre-assistant.modelDeployNamespace" .) .Release.Namespace $llm.enabled | quote }}
+    - name: SRE_ACCESS_MODE
+      value: {{ $sre.rbac.mode | quote }}
+    - name: SRE_AGENT_RUNTIME
+      value: {{ .Values.agent.runtime | quote }}
+    - name: SRE_STORAGE_DIAGNOSTICS_ENABLED
+      value: {{ $sre.storageDiagnostics.enabled | quote }}
     - name: OPENSHIFT_LLM_DEPLOY_ENABLED
       value: {{ $llm.enabled | quote }}
     - name: MODEL_DELETE_ENABLED
@@ -325,6 +353,9 @@ model_release_metadata:
 {{- /* operatorClient.skills: Hermes skills activated for the terminal session. */ -}}
 {{- define "sre-assistant.operatorClientSkills" -}}
 - kubernetes-sre
+{{- if .Values.global.sre.storageDiagnostics.enabled }}
+- kubernetes-storage
+{{- end }}
 {{- if .Values.global.sre.openshiftLlmDeploy.enabled }}
 - openshift-llm-deploy
 {{- end }}

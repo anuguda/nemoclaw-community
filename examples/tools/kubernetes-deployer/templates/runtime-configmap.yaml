@@ -10,6 +10,11 @@ reference release facts such as {{ .Release.Namespace }} from static values.
 {{- range $key, $value := include "nemoclaw-openshell.agentEnvValues" . | fromYaml -}}
   {{- $_ := set $agentEnv $key (toString $value) -}}
 {{- end -}}
+
+{{- if .Values.agent.slack.enabled -}}
+  {{- $plan := .Files.Get (printf "files/messaging/%s-slack.json" .Values.agent.runtime) | fromJson -}}
+  {{- $_ := set $agentEnv "NEMOCLAW_MESSAGING_PLAN_B64" (toJson $plan | b64enc) -}}
+{{- end -}}
 {{- /*
 NemoClaw dashboard and API ports. The managed image already defaults to
 18789 and 8642, so the defaults add no environment and keep the configuration
@@ -38,7 +43,7 @@ as CHAT_UI_URL, the variable the NemoClaw CLI itself uses for that purpose.
   {{- $_ := set $pod "priority_class_name" .Values.agent.sandbox.priorityClassName -}}
 {{- end -}}
 {{- $mounts := list
-      (dict "name" "hermes-state" "mount_path" "/sandbox/workspace" "sub_path" "workspace" "read_only" false)
+      (dict "name" "hermes-state" "mount_path" (ternary "/sandbox/.openclaw/workspace" "/sandbox/workspace" (eq .Values.agent.runtime "openclaw")) "sub_path" "workspace" "read_only" false)
 -}}
 {{- /*
 Additional subpaths of the retained state PVC, typically populated by a seed
@@ -73,6 +78,9 @@ plugin (skills, kubeconfigs, staged binaries). Validated in 000-validate.yaml.
 -}}
 {{- $policy := include "nemoclaw-openshell.policy" . -}}
 {{- $startupContract := "normalize-injected-uid-path-modes-v1" -}}
+{{- if or (ne .Values.agent.runtime "hermes") .Values.agent.slack.enabled (not (hasPrefix "ghcr.io/nvidia/nemoclaw/hermes-sandbox@sha256:" .Values.agent.image.multiarch)) -}}
+{{- $startupContract = printf "native-agent-v1-%s" (.Files.Get "files/scripts/prepare_agent.py" | sha256sum) -}}
+{{- end -}}
 {{- /*
 Seed plugins declare an identity string (for example a skill bundle digest) so
 that changing the seeded content changes the sandbox configuration identity.
@@ -91,6 +99,10 @@ it was not seeded with.
       "seedPlugins" $seedPlugins
       "startupContract" $startupContract
 -}}
+{{- if or (ne .Values.agent.runtime "hermes") .Values.agent.slack.enabled -}}
+{{- $_ := set $configIdentity "agentRuntime" .Values.agent.runtime -}}
+{{- $_ := set $configIdentity "slack" .Values.agent.slack -}}
+{{- end -}}
 {{- $configId := sha256sum (toJson $configIdentity) | trunc 63 -}}
 {{- $labels := dict
       "nemoclaw.nvidia.com/release" (.Release.Name | trunc 63 | trimSuffix "-")
@@ -114,6 +126,8 @@ it was not seeded with.
 {{- $config := dict
       "releaseId" (printf "%s/%s" .Release.Namespace .Release.Name)
       "sandboxName" (include "nemoclaw-openshell.agentName" .)
+      "agentRuntime" .Values.agent.runtime
+      "slack" (merge (dict "providerName" (include "nemoclaw-openshell.slackProviderName" .)) .Values.agent.slack)
       "sandboxDesiredState" .Values.lifecycle.sandbox.desiredState
       "agentImage" .Values.agent.image.multiarch
       "agentEnv" $agentEnv
@@ -141,6 +155,10 @@ data:
     {{- .Files.Get "files/scripts/seed.py" | nindent 4 }}
   wait_seed.py: |
     {{- .Files.Get "files/scripts/wait_seed.py" | nindent 4 }}
+  prepare_agent.py: |
+    {{- .Files.Get "files/scripts/prepare_agent.py" | nindent 4 }}
+  slack-provider.yaml: |
+    {{- include "nemoclaw-openshell.slackProvider" . | nindent 4 }}
   bootstrap.py: |
     {{- .Files.Get "files/scripts/bootstrap.py" | nindent 4 }}
   {{- if .Values.operatorClient.enabled }}

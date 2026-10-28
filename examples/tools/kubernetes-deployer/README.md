@@ -648,3 +648,7 @@ provided with best-effort community support under the repository
 See this chart's [third-party notices](THIRD-PARTY-NOTICES) and the repository
 [third-party notices](../../../THIRD-PARTY-NOTICES) for upstream licenses,
 versions, immutable artifacts, and local modifications.
+
+## Optional native OpenClaw runtime
+
+Set `agent.runtime=openclaw`, supply a matching digest-pinned managed image, and set `access.enabled=false`. The terminal uses `openclaw tui`; workspace and skills use the OpenClaw paths. The existing Hermes runtime remains the default. Official managed v0.0.130 images support Slack without a custom build; Helm supplies the runtime plan. Set `agent.slack.responseStyle=incident-summary` for optional evidence-based incident replies. For Slack credentials, prebuilt-image selection and canary validation, see the [SRE recipe guide](../../recipes/nvidia/kubernetes-sre-assistant/docs/slack-openclaw.md).

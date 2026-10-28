@@ -29,6 +29,7 @@ import ssl
 import sys
 import tarfile
 import tempfile
+import time
 from urllib.parse import urlsplit
 
 sys.path.insert(0, os.environ["SEED_CORE_MODULE_PATH"])
@@ -52,10 +53,11 @@ MAX_BUNDLE_PARTS = 16
 MAX_MEMBER_BYTES = 2_097_152
 MAX_EXPANDED_BYTES = 8_388_608
 MAX_ARCHIVE_MEMBERS = 1025
-ALLOWED_SRE_BUNDLE_ROOTS = frozenset({"kubernetes-sre", "openshift-llm-deploy"})
+ALLOWED_SRE_BUNDLE_ROOTS = frozenset({"kubernetes-sre", "kubernetes-storage", "openshift-llm-deploy"})
 REQUIRED_SRE_BUNDLE_FILES = frozenset(
     {
         "kubernetes-sre/SKILL.md",
+        "kubernetes-storage/SKILL.md",
         "openshift-llm-deploy/SKILL.md",
     }
 )
@@ -324,6 +326,34 @@ def model_configuration_payloads() -> dict[str, bytes]:
     }
 
 
+def adapt_skill_prompt(name: str, payload: bytes) -> bytes:
+    """Adapt verified instructions to the selected harness and access contract."""
+    if not name.endswith('/SKILL.md'):
+        return payload
+    text = payload.decode('utf-8')
+    if os.environ.get('SRE_ACCESS_MODE') == 'protected-advanced':
+        text = text.replace(
+            'Never delete cluster or external-system resources, grant RBAC or\n'
+            'SCC access, impersonate identities, or grant cluster-admin. Refuse destructive\n'
+            'requests and provide a human-reviewable command instead.',
+            'Explicitly requested named application workload deletion is permitted through\n'
+            'the protected-advanced proxy. Never delete persistent storage, core/default\n'
+            'resources or CRDs. Never grant RBAC/SCC access, impersonate identities,\n'
+            'use alternate credentials, or circumvent a proxy denial.')
+        text = text.replace(
+            'The only exception to the\ndeletion rule is an exact model resource pre-authorized through the chart\'s\noptional, namespace-scoped model-deletion proxy.',
+            'Keep the saved-plan approval gates for model deployments. The dedicated\n'
+            'model-delete helper still requires its own exact allowlist; use named\n'
+            'application operations through the main proxy for approved remediation.')
+    if os.environ.get('SRE_AGENT_RUNTIME') == 'openclaw':
+        text = text.replace('/opt/hermes/.venv/bin/python', '/usr/bin/python3')
+        text = text.replace('${HERMES_HOME:-/sandbox/.hermes}', '/sandbox/.openclaw/workspace')
+        text = text.replace('/sandbox/.hermes/skills', '/sandbox/.openclaw/workspace/skills')
+        text = text.replace('use `terminal` from `hermes_tools`, not direct `subprocess` or\nnetwork calls.',
+                            'use the native OpenClaw command execution tool; do not import\nHermes-only modules. All cluster calls must use the configured proxy kubeconfig.')
+    return text.encode('utf-8')
+
+
 def reconcile_sre_skills(model_skill_enabled: bool, payloads: dict[str, bytes]) -> None:
     """Install the verified skill trees read-only and drop retired ones."""
     skills_root = STATE / "hermes" / "skills"
@@ -335,7 +365,7 @@ def reconcile_sre_skills(model_skill_enabled: bool, payloads: dict[str, bytes]) 
         for name, payload in install_payloads.items():
             target = staging / Path(*PurePosixPath(name).parts)
             target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-            target.write_bytes(payload)
+            target.write_bytes(adapt_skill_prompt(name, payload))
             target.chmod(0o555 if "/scripts/" in f"/{name}" else 0o444)
         for legacy_skill in LEGACY_SKILLS:
             seed.replace_owned_directory(None, skills_root / legacy_skill)
@@ -346,6 +376,14 @@ def reconcile_sre_skills(model_skill_enabled: bool, payloads: dict[str, bytes]) 
             model_destination,
         )
         seed.set_directory_tree_mode(skills_root / "kubernetes-sre", 0o555)
+        storage_destination = skills_root / "kubernetes-storage"
+        storage_enabled = os.environ.get("SRE_STORAGE_DIAGNOSTICS_ENABLED") == "true"
+        seed.replace_owned_directory(
+            staging / "kubernetes-storage" if storage_enabled else None,
+            storage_destination,
+        )
+        if storage_enabled:
+            seed.set_directory_tree_mode(storage_destination, 0o555)
         if model_skill_enabled:
             seed.set_directory_tree_mode(model_destination, 0o555)
     finally:
@@ -389,6 +427,33 @@ def load_proxy_ca() -> bytes:
     except (UnicodeError, ssl.SSLError, ValueError) as error:
         raise SystemExit("invalid SRE proxy CA certificate") from error
     return certificate_authority
+
+
+def reconcile_report_scripts() -> None:
+    """Stage shared email collectors read-only; Slack delivery is native OpenClaw."""
+    # Kubelet can create an empty root-owned subPath when a retained workspace
+    # predates this feature. Preserve that empty directory instead of asking the
+    # unprivileged seeder to chmod/delete it. Never move nonempty or linked data.
+    root = STATE / "hermes"
+    candidates = [root / "reports-runtime", *root.glob(".reports-runtime.previous-*")]
+    for old in candidates:
+        if (old.is_dir() and not old.is_symlink() and old.stat().st_uid != os.geteuid()
+                and not any(old.iterdir())):
+            saved = root / (".reports-preseed-empty-" + old.name + "-" + str(time.time_ns()))
+            old.rename(saved)
+    staging = Path(tempfile.mkdtemp(prefix=".sre-reports-", dir=STATE / "hermes"))
+    try:
+        for name in ("scheduled_report.py", "model_discovery.py", "cluster-status.sh", "run_report.py", "reconcile_reports.py", "prepare_tools.py"):
+            source = PLUGIN_ROOT / name
+            if not source.is_file():
+                raise SystemExit("missing chart-owned report script")
+            shutil.copyfile(source, staging / name)
+            (staging / name).chmod(0o444)
+        staging.chmod(0o555)
+        seed.replace_owned_directory(staging, STATE / "hermes" / "reports-runtime")
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging)
 
 
 def reconcile_cli() -> None:
@@ -516,6 +581,7 @@ def main() -> None:
     )
     reconcile_sre_skills(model_skill_enabled, payloads)
     reconcile_cli()
+    reconcile_report_scripts()
     proxy_token = reconcile_proxy_token()
     proxy_ca = load_proxy_ca()
     reconcile_kubeconfigs(model_delete_enabled, metrics_enabled, proxy_token, proxy_ca)

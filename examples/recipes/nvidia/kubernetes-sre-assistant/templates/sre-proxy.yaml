@@ -45,12 +45,18 @@ spec:
             - name: PROXY_PORT
               value: {{ .Values.global.sre.proxy.port | quote }}
             - name: PROXY_ALLOWED_METHODS
-              value: {{ ternary "GET,POST,PUT,PATCH" "GET,PATCH" (eq .Values.global.sre.rbac.mode "broad-no-delete") | quote }}
+              value: {{ if eq .Values.global.sre.rbac.mode "protected-advanced" }}"GET,POST,PUT,PATCH,DELETE"{{ else }}{{ ternary "GET" (ternary "GET,POST,PUT,PATCH" "GET,PATCH" (eq .Values.global.sre.rbac.mode "broad-no-delete")) (eq .Values.global.sre.rbac.mode "read-only") | quote }}{{ end }}
             - name: PROXY_POLICY
-              value: general
+              value: {{ ternary "protected-advanced" "general" (eq .Values.global.sre.rbac.mode "protected-advanced") }}
+            - name: PROXY_PROTECTED_NAMESPACES
+              value: {{ .Release.Namespace | quote }}
             {{- if .Values.global.sre.openshiftLlmDeploy.enabled }}
             - name: PROXY_SERVICE_PROXY_NAMESPACE
               value: {{ include "sre-assistant.modelDeployNamespace" . | quote }}
+            - name: PROXY_HF_SECRET_NAMESPACE
+              value: {{ include "sre-assistant.modelDeployNamespace" . | quote }}
+            - name: PROXY_HF_SECRET_NAME
+              value: {{ .Values.global.sre.openshiftLlmDeploy.hfTokenSecretRef.name | quote }}
             {{- end }}
             - name: PROXY_CLIENT_TOKEN_FILE
               value: /proxy-auth/token

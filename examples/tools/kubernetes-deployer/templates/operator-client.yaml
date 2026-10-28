@@ -123,6 +123,8 @@ spec:
               value: {{ .Values.openshell.server.oidc.adminRole | quote }}
             - name: OPENSHELL_OIDC_SUBJECT
               value: {{ include "nemoclaw-openshell.operatorClientSubject" . | quote }}
+            - name: AGENT_RUNTIME
+              value: {{ .Values.agent.runtime | quote }}
             - name: HERMES_SKILLS
               value: {{ join "," $skills | quote }}
           resources:

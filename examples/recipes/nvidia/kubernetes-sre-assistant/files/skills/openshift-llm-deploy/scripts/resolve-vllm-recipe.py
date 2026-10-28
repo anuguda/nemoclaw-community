@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Resolve an exact official vLLM recipe into immutable inert artifacts."""
@@ -50,7 +50,7 @@ PRODUCT_HARDWARE = {
 ALLOWED_CATALOG_FIELDS = {"hf_id", "title", "provider", "url", "json", "derived_from"}
 ALLOWED_MODEL_FIELDS = {
     "hf_id", "meta", "recommended_command", "model", "features", "opt_in_features",
-    "variants", "hardware_overrides", "guide", "kv_offload_support",
+    "variants", "hardware_overrides", "guide", "kv_offload_support", "source",
 }
 ALLOWED_MODEL_RECORD_FIELDS = {
     "model_id", "min_vllm_version", "nightly_required", "docker_image", "architecture",
@@ -350,6 +350,25 @@ def validate_model_record(value: Any, model: str) -> dict[str, Any]:
 def validate_model_recipe(value: Any, model: str) -> dict[str, Any]:
     recipe = require_object(value, "invalid-model-recipe")
     require_exact_fields(recipe, ALLOWED_MODEL_FIELDS, "unknown-model-recipe-field")
+    if "source" in recipe:
+        # Catalog provenance is inert metadata, never a command, image choice,
+        # alternate download URL or authority to bypass recipe validation.
+        source = require_object(recipe["source"], "invalid-model-source")
+        require_exact_fields(source, {"source", "repo", "ref", "sha", "path", "edit_url", "overlays"},
+                             "unknown-model-source-field")
+        for key in ("source", "repo", "ref", "path", "edit_url"):
+            bounded_text(source.get(key), "invalid-model-source", 1024)
+        if source["source"] != "recipes" or source["repo"] != "vllm-project/recipes":
+            raise ResolutionError("invalid-model-source-repository")
+        if source.get("sha") is not None and not re.fullmatch(r"[0-9a-f]{40}", str(source["sha"])):
+            raise ResolutionError("invalid-model-source-sha")
+        if source["path"].startswith("/") or ".." in source["path"].split("/"):
+            raise ResolutionError("invalid-model-source-path")
+        edit = urlsplit(source["edit_url"])
+        if (edit.scheme != "https" or edit.netloc != "github.com" or edit.query or edit.fragment
+                or not edit.path.startswith("/vllm-project/recipes/edit/")):
+            raise ResolutionError("invalid-model-source-url")
+        bounded_string_list(source.get("overlays"), "invalid-model-source-overlays", 32)
     if "kv_offload_support" in recipe:
         offload = require_object(recipe["kv_offload_support"], "invalid-kv-offload-support")
         require_exact_fields(offload, {"offloading_cpu", "offloading_fs"}, "unknown-kv-offload-support-field")

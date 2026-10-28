@@ -149,6 +149,18 @@ spec:
             - name: POD_SERVICE_ACCOUNT
               value: {{ include "nemoclaw-openshell.lifecycleServiceAccountName" . | quote }}
             {{- end }}
+            {{- if .Values.agent.slack.enabled }}
+            - name: SLACK_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.agent.slack.secretRef.name | quote }}
+                  key: {{ .Values.agent.slack.secretRef.botTokenKey | quote }}
+            - name: SLACK_APP_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.agent.slack.secretRef.name | quote }}
+                  key: {{ .Values.agent.slack.secretRef.appTokenKey | quote }}
+            {{- end }}
             - name: OPENAI_API_KEY
               valueFrom:
                 secretKeyRef:
@@ -195,6 +207,12 @@ spec:
                 path: bootstrap-config.json
               - key: policy.yaml
                 path: policy.yaml
+              - key: prepare_agent.py
+                path: prepare_agent.py
+              {{- if .Values.agent.slack.enabled }}
+              - key: slack-provider.yaml
+                path: slack-provider.yaml
+              {{- end }}
         - name: tools
           emptyDir: {}
         - name: cli-config

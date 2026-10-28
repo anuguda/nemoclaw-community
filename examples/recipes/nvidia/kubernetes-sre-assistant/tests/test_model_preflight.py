@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from pathlib import Path
@@ -8,6 +8,7 @@ import unittest
 import argparse
 import contextlib
 import io
+import os
 from unittest import mock
 
 
@@ -15,6 +16,10 @@ SOURCE = Path(__file__).resolve().parents[1] / 'files/skills/openshift-llm-deplo
 
 
 class ModelPreflightTests(unittest.TestCase):
+    def setUp(self):
+        # main() sets the sandbox PATH; do not leak it into later Helm tests.
+        self.enterContext(mock.patch.dict(os.environ))
+
     def test_release_defaults_to_model_and_openshift_route(self):
         module = runpy.run_path(str(SOURCE))
         arguments = argparse.Namespace(model='https://huggingface.co/Qwen/Qwen3.8-27B', release=None, platform='openshift', expose=None)

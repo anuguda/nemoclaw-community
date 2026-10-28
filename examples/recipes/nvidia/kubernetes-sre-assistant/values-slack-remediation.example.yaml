@@ -1,0 +1,30 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Apply after the OpenClaw + Slack overlays. Explicitly grants requested
+# workload remediation to the existing Slack user/channel allowlists.
+global:
+  sre:
+    slackRemediation:
+      enabled: true
+    rbac:
+      mode: protected-advanced
+      dangerousAcknowledgement: I_ACKNOWLEDGE_PROTECTED_CLUSTER_REMEDIATION
+    openshiftLlmDeploy:
+      enabled: true
+      targetNamespace: model-workloads
+      hfTokenSecretRef:
+        name: hf-token-secret
+        key: HF_TOKEN
+    reports:
+      enabled: true
+      channel: C0123456789
+      schedule: "30 9 * * *"
+      huggingFaceSchedule: "35 9 * * *"
+      timeZone: America/Los_Angeles
+      topN: 10
+# Interactive permission does not silently enable autonomous mutations.
+autoheal:
+  agentConfig:
+    policy:
+      mode: observe
+      dry_run: true

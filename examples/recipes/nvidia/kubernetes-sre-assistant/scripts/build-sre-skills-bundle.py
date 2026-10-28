@@ -15,10 +15,11 @@ import re
 import tarfile
 
 
-ALLOWED_ROOTS = frozenset({"kubernetes-sre", "openshift-llm-deploy"})
+ALLOWED_ROOTS = frozenset({"kubernetes-sre", "kubernetes-storage", "openshift-llm-deploy"})
 REQUIRED_FILES = frozenset(
     {
         "kubernetes-sre/SKILL.md",
+        "kubernetes-storage/SKILL.md",
         "openshift-llm-deploy/SKILL.md",
     }
 )

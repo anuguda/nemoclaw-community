@@ -144,6 +144,9 @@ def configure_cli_authentication() -> None:
 
 
 def hermes_command(arguments: list[str]) -> list[str]:
+    runtime = os.environ.get("AGENT_RUNTIME", "hermes")
+    if runtime not in {"hermes", "openclaw"}:
+        raise SystemExit("unsupported agent runtime")
     command = [
         CLI,
         "sandbox",
@@ -151,13 +154,17 @@ def hermes_command(arguments: list[str]) -> list[str]:
         "--name",
         os.environ["OPENSHELL_SANDBOX_NAME"],
         "--workdir",
-        "/sandbox/workspace",
+        "/sandbox/.openclaw/workspace" if runtime == "openclaw" else "/sandbox/workspace",
         "--timeout",
         "0",
         "--no-tty" if "--oneshot" in arguments else "--tty",
         "--",
-        "hermes",
+        "openclaw" if runtime == "openclaw" else "hermes",
     ]
+    if runtime == "openclaw":
+        if arguments:
+            raise SystemExit("OpenClaw terminal currently supports interactive TUI only")
+        return command + ["tui"]
     for skill in filter(None, (item.strip() for item in os.environ.get("HERMES_SKILLS", "").split(","))):
         command.extend(["--skills", skill])
     command.extend(arguments)
