@@ -81,7 +81,7 @@ def infra_summary(snapshot, now, config):
     totals = {key: sum(reports._integer(n.get(key, '0')) for n in nodes)
               for key in ('GPU Allocatable', 'GPU Requested', 'GPU Free')}
     marker = '✅' if state == 'CHECKS PASSED' else ':alert:'
-    lines = [f'{marker} **TME inference · {state}**', timestamp(now, config),
+    lines = [f'{marker} **Infrastructure · {state}**', timestamp(now, config),
              f"GPU nodes: **{ready_nodes}/{len(nodes)} ready** · Model resources: **{ready_models}/{len(models)} ready**",
              f"GPUs: **{totals['GPU Requested']}/{totals['GPU Allocatable']} requested** · **{totals['GPU Free']} available**",
              'Available = allocatable minus requests; not GPU-memory telemetry. Readiness is not an inference test.', '']

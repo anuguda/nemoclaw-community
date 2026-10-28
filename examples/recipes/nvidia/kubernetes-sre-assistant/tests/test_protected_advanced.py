@@ -91,7 +91,12 @@ class ProtectedAdvancedTest(unittest.TestCase):
             upstream.status = 200
             upstream.__enter__.return_value = upstream
             upstream.read.return_value = b'{"data":{"HF_TOKEN":"sensitive"}}'
-            with patch.object(proxy, 'is_authorized', return_value=True), patch.object(proxy, 'read_bounded', return_value='test'), patch.object(proxy.ssl, 'create_default_context'), patch.object(proxy, 'urlopen', return_value=upstream):
+            with patch.dict(os.environ, {'PROXY_POLICY': 'protected-advanced'}), \
+                 patch.object(proxy, 'is_authorized', return_value=True), \
+                 patch.object(proxy, 'read_bounded', return_value='test'), \
+                 patch.object(proxy.ssl, 'create_default_context'), \
+                 patch.object(proxy, 'build_opener') as builder:
+                builder.return_value.open.return_value = upstream
                 handler.proxy()
             upstream.read.assert_not_called()
             self.assertEqual(handler.send_payload.call_args.args[1], proxy.secret_existence_response(target))

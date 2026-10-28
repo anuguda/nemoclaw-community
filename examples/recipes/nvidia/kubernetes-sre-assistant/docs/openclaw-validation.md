@@ -89,3 +89,59 @@ mounts were also verified. Live Hermes storage/model execution was not exercised
 External storage telemetry clients and private skill content are not part of
 this feature. The namespace-scoped helper reports Kubernetes storage metadata,
 not application I/O, free space or filesystem-repair success.
+
+## Default-runtime and merged security review — 2026-10-28
+
+The SRE recipe now declares NemoClaw-managed Hermes explicitly in its own
+values. The deployer and Slack example already selected Hermes. OpenClaw remains
+an explicit overlay choice; scheduled reports reject Hermes rather than
+silently selecting OpenClaw. No existing cluster release was changed in this
+review.
+
+PR [#201](https://github.com/NVIDIA/nemoclaw-community/pull/201), revision
+`63a82dcd28b23c34df9ce0a0e89601693099e5c6`, was integrated while preserving the
+optional runtime, Slack and storage-diagnostic changes:
+
+- HF checks accept only the canonical configured Secret reference. The trusted
+  proxy negotiates metadata, never reads the upstream body, constructs the
+  response itself and refuses redirects. The same boundary applies to the
+  optional protected-advanced policy; its existing mutation restrictions remain.
+- Automatic storage expansion durably reserves the global action budget before
+  submitting a PVC patch. An uncertain write retains its reservation; corrupt
+  memory fails closed. Automatic storage requires a single writer.
+- Public models can download anonymously. Authentication failures provide
+  operator-managed Secret guidance without printing vendor exception contents.
+
+The source review covered proxy authorization, credential mediation, Slack
+allowlists, runtime preparation, reports, storage writes and deployment helpers.
+A targeted credential/private-identifier audit covered 103 changed source files
+and the decoded skill archive. No additional exploitable issue was confirmed
+within this scope. Automated security-scanner and independent-review invocations
+were not authorized, so this is an inline source review, not a scanner result or
+independent security certification.
+
+Local verification:
+
+| Check | Result |
+| --- | --- |
+| Runtime Helm rendering | Default Hermes, Hermes with storage, Hermes with Slack, optional OpenClaw, and OpenClaw with Slack reports passed |
+| Fail-closed configuration | Mismatched runtime/image, Hermes scheduled reports and empty Slack allowlists rejected |
+| Native preparation | Both runtimes disabled stale Slack configuration, preserved selected model configuration and applied private file permissions in temporary homes |
+| HTTP proxy exercise | Both policies returned constructed Secret metadata and denied query/watch variants, other Secrets, RBAC writes and forbidden deletion without forwarding |
+| SRE suite | 263 tests passed, including storage-budget crash/restart and Secret redirect/body-isolation coverage |
+| Deployer suite | 117 tests passed |
+| Helm lint | SRE recipe, deployer and autoheal charts passed |
+| Community checks | 1,023 source-file SPDX checks, 63-label taxonomy and whitespace checks passed |
+| Syntax checks | 58 changed Python sources and two changed shell scripts passed |
+
+The merged optional-HF tests initially leaked the preflight sandbox PATH into
+later Helm checks. Their environment is now isolated; the complete SRE suite
+passes without changing OpenShell database behavior. Fixture HTTP-error resource
+warnings remain non-fatal.
+
+This verification did not start a live Hermes gateway, redeploy a cluster,
+deliver a new Slack message or exercise live PVC expansion. Helm values remain
+trusted operator input. Mutation-enabled access modes grant substantial workload
+authority; direct Secret/exec denial is not a substitute for namespace isolation,
+admission policy or a full authorization broker. Slack report recipients must be
+authorized to receive the collected cluster information.

@@ -343,9 +343,9 @@ def infra_report(now: datetime, *, snapshot=None) -> tuple[str, str]:
     ready_models = sum(1 for row in model_rows if row[-1].startswith("Ready=True"))
     status = infrastructure_state(metadata, sections, collector_status)
     marker = '✅' if status == 'CHECKS PASSED' else '🚨'
-    subject = f"{marker} TME inference infrastructure: {status}"
+    subject = f"{marker} Infrastructure: {status}"
     highlights = [
-        f"# {marker} TME inference infrastructure status",
+        f"# {marker} Infrastructure status",
         "",
         f"**Overall status:** {status.upper()}",
         "",

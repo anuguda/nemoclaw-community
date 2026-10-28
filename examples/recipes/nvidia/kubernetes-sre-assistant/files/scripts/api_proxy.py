@@ -13,7 +13,7 @@ import secrets
 import ssl
 from urllib.error import HTTPError, URLError
 from urllib.parse import unquote, urlsplit, urlunsplit
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener, urlopen
 
 
 UPSTREAM = "https://kubernetes.default.svc"
@@ -161,18 +161,6 @@ def protected_namespace(namespace: str | None) -> bool:
     )
 
 
-def secret_existence_target(target: str, method: str) -> bool:
-    """One configured HF reference can be checked, never read or watched."""
-    parsed = resource_target(target)
-    if not parsed or method != "GET" or urlsplit(target).query or "/watch/" in target:
-        return False
-    group, namespace, resource, name, subresource, tail = parsed
-    return bool(group == "" and resource == "secrets" and name
-                and namespace == os.environ.get("PROXY_HF_SECRET_NAMESPACE")
-                and name == os.environ.get("PROXY_HF_SECRET_NAME")
-                and not subresource and not tail)
-
-
 def secret_existence_response(target: str) -> bytes:
     # Construct from the validated target, never from upstream Secret data,
     # labels or annotations (which may themselves contain credentials).
@@ -196,6 +184,16 @@ def application_write_allowed(parsed, method: str) -> bool:
     if method == "DELETE":
         return bool(name and not subresource and resource != "persistentvolumeclaims")
     return method in {"POST", "PUT", "PATCH"}
+
+
+def hf_secret_check(target: str, method: str, policy: str) -> bool:
+    """Only a canonical GET of the configured HF Secret may return existence."""
+    namespace = os.environ.get("PROXY_HF_SECRET_NAMESPACE", "")
+    name = os.environ.get("PROXY_HF_SECRET_NAME", "")
+    return bool(
+        policy in {"general", "protected-advanced"} and method == "GET" and namespace and name
+        and target == f"/api/v1/namespaces/{namespace}/secrets/{name}"
+    )
 
 
 def request_allowed(target: str, method: str, policy: str) -> bool:
@@ -241,7 +239,7 @@ def request_allowed(target: str, method: str, policy: str) -> bool:
     }:
         return False
     if resource == "secrets":
-        return secret_existence_target(target, method)
+        return hf_secret_check(target, method, policy)
     if resource == "serviceaccounts" and subresource == "token":
         return False
     if resource == "pods" and subresource in {
@@ -290,6 +288,13 @@ def direct_service_url(target: str) -> str:
             "",
         )
     )
+
+
+class NoSecretRedirects(HTTPRedirectHandler):
+    """Reject redirects before urllib reads their body or reuses credentials."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
 
 
 class ProxyHandler(BaseHTTPRequestHandler):
@@ -364,10 +369,19 @@ class ProxyHandler(BaseHTTPRequestHandler):
         try:
             target = validate_request_target(self.path)
             policy = os.environ.get("PROXY_POLICY", "general")
+            # Use the original path too: URL normalization can discard a bare '?'.
+            secret_check = hf_secret_check(self.path, self.command, policy)
+            parsed_resource = resource_target(target)
+            if parsed_resource and parsed_resource[2] == "secrets" and not secret_check:
+                self.reject(403, "request_forbidden_by_proxy_policy")
+                return
             if not request_allowed(target, self.command, policy):
                 self.reject(403, "request_forbidden_by_proxy_policy")
                 return
             body = self.request_body()
+            if secret_check and body:
+                self.reject(400, "invalid_request")
+                return
             service_account_token = read_bounded(SERVICE_ACCOUNT_TOKEN, maximum=16384)
         except (OSError, UnicodeError, ValueError):
             self.reject(400, "invalid_request")
@@ -377,8 +391,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
             "Authorization": f"Bearer {service_account_token}",
             "Accept": self.headers.get("Accept", "application/json"),
         }
-        metadata_only = secret_existence_target(target, self.command)
-        if metadata_only:
+        if secret_check:
+            # No JSON fallback: ask Kubernetes for metadata, never Secret data.
             headers["Accept"] = "application/json;as=PartialObjectMetadata;g=meta.k8s.io;v=v1"
         if self.headers.get("Content-Type"):
             headers["Content-Type"] = self.headers["Content-Type"]
@@ -398,7 +412,11 @@ class ProxyHandler(BaseHTTPRequestHandler):
         maximum_response = int(os.environ.get("PROXY_MAX_RESPONSE_BYTES", "33554432"))
 
         try:
-            upstream = urlopen(request, context=context, timeout=timeout)  # noqa: S310 - fixed upstream.
+            if secret_check:
+                opener = build_opener(HTTPSHandler(context=context), NoSecretRedirects())
+                upstream = opener.open(request, timeout=timeout)  # noqa: S310 - fixed upstream, no redirects.
+            else:
+                upstream = urlopen(request, context=context, timeout=timeout)  # noqa: S310 - fixed upstream.
         except HTTPError as error:
             upstream = error
         except (OSError, URLError, ValueError):
@@ -406,11 +424,14 @@ class ProxyHandler(BaseHTTPRequestHandler):
             return
 
         with upstream:
-            if metadata_only:
+            if secret_check:
+                # Never read/forward the upstream body, including errors or
+                # annotations. Keep 'oc get secret NAME -o name' compatible.
                 if upstream.status == 200:
                     self.send_payload(200, secret_existence_response(target))
                 else:
-                    self.reject(upstream.status, "credential_reference_unavailable")
+                    status = upstream.status if upstream.status in (403, 404) else 502
+                    self.reject(status, "hf_secret_not_found" if status == 404 else "hf_secret_check_unavailable")
                 return
             payload = upstream.read(maximum_response + 1)
             if len(payload) > maximum_response:

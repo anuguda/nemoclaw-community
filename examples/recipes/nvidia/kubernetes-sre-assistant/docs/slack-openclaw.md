@@ -7,6 +7,17 @@ The default remains the existing NemoClaw-managed **Hermes** sandbox. Setting
 `deployer.agent.runtime=openclaw` selects a **NemoClaw-managed OpenClaw** sandbox;
 it does not remove NemoClaw or OpenShell. Both use the same Kubernetes API proxy.
 
+The SRE recipe also declares `deployer.agent.runtime: hermes` explicitly in its
+own `values.yaml`; it does not depend only on the deployer subchart's default.
+The Slack example selects Hermes. OpenClaw requires the separate overlay and a
+matching digest-pinned managed image. Enabling scheduled reports with Hermes
+fails validation rather than switching the runtime; these reports currently
+require an explicitly selected OpenClaw runtime.
+
+Changing chart defaults does not migrate an existing OpenClaw release or its
+native sessions. Review site overlays before upgrades, and use the documented
+retained-volume lifecycle for an intentional runtime change.
+
 ```mermaid
 flowchart LR
   User[Allowed Slack user] <-->|DM or channel mention| Slack[Slack app]

@@ -220,6 +220,9 @@
                     "key": {
                       "type": "string",
                       "pattern": "^[A-Za-z0-9._-]{1,253}$"
+                    },
+                    "optional": {
+                      "type": "boolean"
                     }
                   },
                   "required": [

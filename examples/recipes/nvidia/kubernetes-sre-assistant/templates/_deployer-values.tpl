@@ -254,7 +254,7 @@ model_release_metadata:
         "secretName" $llm.hfTokenSecretRef.name
         "secretKey" $llm.hfTokenSecretRef.key
         "deleteAfterDownload" false
-        "requireTokenForHuggingFaceModels" true
+        "requireTokenForHuggingFaceModels" (not $llm.hfTokenSecretRef.optional)
         "modelRunnerServiceAccount" (include "sre-assistant.modelRunnerServiceAccountName" .)
         | toJson | quote }}
     {{- end }}
