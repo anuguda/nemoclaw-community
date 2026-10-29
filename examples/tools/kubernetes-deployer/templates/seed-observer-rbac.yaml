@@ -1,0 +1,40 @@
+{{- $seedRuns := and .Values.lifecycle.seed.enabled (or (not .Release.IsUpgrade) .Values.lifecycle.seed.runOnUpgrade) }}
+{{- $homeRuns := and .Values.agent.nemoclawHome.enabled (or (not .Release.IsUpgrade) .Values.lifecycle.seed.runOnUpgrade) }}
+{{- if and .Values.lifecycle.bootstrap.enabled (or $seedRuns $homeRuns) }}
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "nemoclaw-openshell.fullname" . }}-seed-observer
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "nemoclaw-openshell.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    resourceNames:
+      {{- if $seedRuns }}
+      - {{ include "nemoclaw-openshell.seedJobName" . | quote }}
+      {{- end }}
+      {{- if $homeRuns }}
+      - {{ printf "%s-%d" (include "nemoclaw-openshell.nemoclawHomePrepareName" .) .Release.Revision | quote }}
+      {{- end }}
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "nemoclaw-openshell.fullname" . }}-seed-observer
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "nemoclaw-openshell.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "nemoclaw-openshell.fullname" . }}-seed-observer
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "nemoclaw-openshell.lifecycleServiceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

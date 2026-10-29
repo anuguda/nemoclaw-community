@@ -28,6 +28,89 @@ model deployment skill are separate, acknowledged opt-ins. The chart consumes
 the prebuilt managed image and never runs the NemoClaw CLI or bootstrap, hence
 `NemoClaw: N/A`.
 
+## Optional APF and CPU validation
+
+The deployer's [APF operator workflow](../../../tools/kubernetes-deployer/README.md#optional-apf-governance)
+also applies to this umbrella chart. Use root **`global.apf`** settings, not a
+second independent gateway toggle. Render the SRE chart before signing so the
+read-only skill/kubeconfig subpaths and proxy network policies are included.
+Hermes remains the default; OpenClaw remains explicit and optional.
+
+APF admission/signatures complement the SRE proxy and Kubernetes RBAC. They do
+not semantically authorize every tool call or govern the separate auto-heal
+controller's direct API actions. For a protected-advanced canary, configure
+`global.sre.rbac.writeNamespaces` with only its model/test namespace. Cluster
+reads remain available; writes outside that allowlist are rejected. Keep the
+model namespace separate from the protected SRE release namespace.
+The model namespace must also enforce restricted workload admission (Kubernetes
+Pod Security `restricted`, or equivalent platform admission). A namespace write
+allowlist alone cannot prevent privileged/hostPath Pods. Do not reuse the
+privileged OpenShell supervisor namespace as the model target.
+
+The optional `openshift-llm-deploy` skill now has an explicit `--runtime cpu`
+path using a pinned llama.cpp image and the exact public
+`Qwen/Qwen2.5-0.5B-Instruct-GGUF` Q4_K_M artifact. It uses no GPU resources or
+HF credentials. The saved-plan hash, immutable model/image identity, namespace
+and runner binding, expiry and final confirmation still apply. See the
+[skill's CPU instructions](files/skills/openshift-llm-deploy/SKILL.md#cpu-only-validation-model).
+A Ready Deployment is not proof of inference: validate an actual completion
+through the chart-authorized model Service proxy.
+
+Email delivery needs an approved SMTP host, sender, TLS mode and any required
+credentials supplied through Secret references. Existing Slack integration or
+an allowed recipient address alone does not provision email transport. Never
+claim an email was delivered from a log-only or disabled notifier.
+
+### CPU APF qualification (2026-10-29)
+
+CPU-only APF/Hermes canaries were exercised on native Kubernetes 1.36.2 and
+OpenShift 4.22.6. Agent reasoning used existing external inference providers;
+the separate validation model was the local CPU-only Qwen recipe, not a
+replacement SRE reasoning model. Existing operational/Slack releases were not
+modified.
+
+- Both agents read real cluster state and identified a deliberately unbound
+  PVC's missing StorageClass from current events. No storage repair was applied;
+  the empty, owned test claims were removed afterward. One native-agent proposed
+  class patch was corrected: existing PVC `storageClassName` is immutable.
+- Independent official `GetSandbox` readback verified Ed25519 provenance,
+  approved revision, expiry and canonical policy digest on both platforms.
+  Unsigned driver changes were denied without creating a Sandbox. Missing
+  bearer authentication and an incorrect CA were rejected.
+- An isolated APF outage on OpenShift denied new admission, rather than falling
+  back to an unsigned policy. After restart the counter high-water mark remained
+  1, and the audit file retained events older than the replacement Pod.
+- Both 2Gi model PVCs bound; the CPU model served `2+2 equals 4.` through the
+  authenticated Service proxy. Final installed skills on both platforms passed
+  basic completion, tool-call and bounded Deployment readiness verification.
+- Restricted admission in both model namespaces rejected a privileged Pod in
+  server dry-run. Neither the agent nor model requested GPUs. APF governs the
+  agent runtime; model Pods remain governed by Kubernetes RBAC/admission.
+
+Single-request server-reported decode samples (8 completion tokens; not a load
+benchmark or cross-platform performance comparison):
+
+| Platform | Decode tokens/s | Decode ms/token | Cached prompt tokens |
+| --- | ---: | ---: | ---: |
+| Native Kubernetes | 92.43 | 10.82 | 0 |
+| OpenShift | 83.10 | 12.03 | 31 |
+
+Load concurrency, throughput saturation and streaming TTFT were not measured.
+Local validation passed 120 deployer tests, 268 SRE tests, 336 APF Rust tests,
+Helm lint and SPDX checks. Review was source/manual plus exercised negative
+cases, not an independent penetration test.
+
+Helm qualification: the native Helm 4.2.1 operation outlived its timeout and left
+`pending-upgrade`. After that process exited on its own, a no-hook rollback and
+Helm 4.2.3 upgrade with `--wait=legacy` completed the final retained-state bundle
+cutover. No process cancellation or direct Helm-storage edit was used. Both
+platforms subsequently exercised the installed final client/readiness code.
+
+Qualification limits: SMTP delivery was not tested because transport/sender
+credentials were unavailable. OpenClaw has compatibility tests, not a live
+qualification from this run. Do not treat these results as production HA,
+certificate renewal or per-tool semantic authorization.
+
 ## Screenshot
 
 ![Sanitized local Helm validation showing the recipe checks passing](docs/images/kubernetes-sre-assistant-validation.png)
@@ -599,11 +682,11 @@ endpoint) confirmed:
 
 Run the local/static checks from this recipe directory:
 
-Install PyYAML in the Python environment used for these checks. The model
-planning helpers use it to read the chart-managed YAML configuration:
+Install PyYAML and cryptography in the Python environment used for these
+checks. Model planning uses YAML; the APF tests exercise real TLS/signatures:
 
 ```bash
-python3 -m pip install pyyaml
+python3 -m pip install pyyaml cryptography
 ```
 
 ```bash

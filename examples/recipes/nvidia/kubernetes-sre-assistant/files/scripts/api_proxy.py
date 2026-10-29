@@ -171,6 +171,9 @@ def secret_existence_response(target: str) -> bytes:
 
 def application_write_allowed(parsed, method: str) -> bool:
     group, namespace, resource, name, subresource, tail = parsed
+    write_namespaces = {n for n in os.environ.get("PROXY_WRITE_NAMESPACES", "").split(",") if n}
+    if write_namespaces and namespace not in write_namespaces:
+        return False
     if protected_namespace(namespace) or resource not in APPLICATION_RESOURCES.get(group, set()):
         return False
     if group == "" and resource == "services" and subresource == "proxy":

@@ -598,6 +598,9 @@ def main() -> None:
     verify_issuer_discovery()
     configure_cli_authentication()
     wait_for_gateway()
+    if CONFIG.get("apfEnabled"):
+        run(["settings", "set", "--global", "--key", "agent_policy_proposals_enabled",
+             "--value", "false", "--yes"])
     if CONFIG.get("sandboxDesiredState", "present") == "absent":
         # Reviewed teardown: remove only this release's sandbox and stop. The
         # provider and workspace memberships stay so a later `present` revision

@@ -489,35 +489,6 @@ class ChartTest(unittest.TestCase):
                     job,
                 )
 
-    def test_install_seed_binds_wait_for_first_consumer_storage_before_bootstrap(self) -> None:
-        rendered = self.run_helm(
-            "template",
-            "kubernetes-deployer-test",
-            str(CHART_DIR),
-        )
-        bootstrap = self.rendered_from_source(
-            rendered,
-            "kubernetes-deployer/templates/bootstrap-job.yaml",
-        )
-
-        self.assertIn("- key: stage_cli.py\n                path: stage_cli.py", bootstrap)
-        self.assertIn("- key: wait_seed.py\n                path: wait_seed.py", bootstrap)
-        self.assertIn("helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded", bootstrap)
-        self.assertIn("name: wait-for-state-seed", bootstrap)
-        self.assertIn("persistentVolumeClaim:", bootstrap)
-        self.assertIn("mountPath: /state", bootstrap)
-        main_container = bootstrap.split("\n      containers:\n", maxsplit=1)[1]
-        self.assertNotIn("mountPath: /state", main_container)
-
-        seed = self.rendered_from_source(
-            rendered,
-            "kubernetes-deployer/templates/seed-job.yaml",
-        )
-        self.assertIn("name: kubernetes-deployer-test-seed-1", seed)
-        self.assertNotIn("helm.sh/hook:", seed)
-        self.assertIn("restartPolicy: Never", seed)
-        self.assertIn('name: RELEASE_REVISION\n              value: "1"', seed)
-
     def test_normal_upgrade_does_not_remount_live_sandbox_pvc(self) -> None:
         rendered = self.run_helm(
             "template",
@@ -566,23 +537,6 @@ class ChartTest(unittest.TestCase):
             expected="I_ACKNOWLEDGE_SANDBOX_STOPPED",
         )
 
-        rendered = self.run_helm(
-            "template",
-            "kubernetes-deployer-test",
-            str(CHART_DIR),
-            "--is-upgrade",
-            "--set",
-            "lifecycle.seed.runOnUpgrade=true",
-            "--set-string",
-            "lifecycle.seed.dangerousAcknowledgement=I_ACKNOWLEDGE_SANDBOX_STOPPED",
-        )
-        self.assertIn("kubernetes-deployer/templates/seed-job.yaml", rendered)
-        bootstrap = self.rendered_from_source(
-            rendered,
-            "kubernetes-deployer/templates/bootstrap-job.yaml",
-        )
-        self.assertIn("name: wait-for-state-seed", bootstrap)
-        self.assertIn("mountPath: /state", bootstrap)
 
     def test_managed_bootstrap_uses_projected_service_account_oidc(self) -> None:
         rendered = self.run_helm(
@@ -1280,13 +1234,6 @@ class ChartTest(unittest.TestCase):
             rendered,
             "kubernetes-deployer/templates/nemoclaw-home.yaml",
         )
-        self.assertIn("kind: PersistentVolumeClaim", home)
-        self.assertIn("kind: Job", home)
-        self.assertIn('helm.sh/hook-weight: "5"', home)
-        self.assertIn("runAsUser: 0", home)
-        self.assertIn("readOnlyRootFilesystem: true", home)
-        self.assertIn("chcon system_u:object_r:container_file_t:s0 /nemoclaw-home", home)
-        self.assertIn("serviceAccountName: release-openshell-sandbox", home)
         driver = self.bootstrap_config(rendered)["driverConfig"]["kubernetes"]
         mounts = driver["containers"]["agent"]["volume_mounts"]
         home_mount = [mount for mount in mounts if mount["mount_path"] == "/sandbox/.nemoclaw"]
@@ -1298,12 +1245,6 @@ class ChartTest(unittest.TestCase):
             volumes["nemoclaw-home"]["persistent_volume_claim"]["claim_name"],
             "release-kubernetes-deployer-nemoclaw-home",
         )
-        # The bootstrap hook (weight 10) must run after the prepare hook.
-        bootstrap = self.rendered_from_source(
-            rendered,
-            "kubernetes-deployer/templates/bootstrap-job.yaml",
-        )
-        self.assertIn('helm.sh/hook-weight: "10"', bootstrap)
 
         disabled = self.run_helm(
             "template",

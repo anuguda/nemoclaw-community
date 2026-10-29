@@ -1,0 +1,279 @@
+{{- if .Values.global.apf.enabled }}
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+{{- $apf := .Values.global.apf -}}
+{{- if ne .Values.openshell.mode "managed" -}}{{- fail "APF requires a dedicated managed gateway" -}}{{- end -}}
+{{- if .Values.openshell.server.disableTls -}}{{- fail "APF requires verified gateway TLS" -}}{{- end -}}
+{{- if ne .Values.openshell.server.policyValidationFailureMode "fail_closed" -}}{{- fail "APF requires fail_closed policy validation" -}}{{- end -}}
+{{- if or (not .Values.openshell.server.oidc.issuer) (not .Values.openshell.server.oidc.audience) (not .Values.openshell.server.oidc.adminRole) -}}{{- fail "APF Kubernetes callbacks require the configured OIDC issuer, audience and admin role" -}}{{- end -}}
+{{- if .Values.openshell.server.auth.allowUnauthenticatedUsers -}}{{- fail "APF requires authenticated OpenShell users" -}}{{- end -}}
+{{- if .Values.openshell.certManager.enabled -}}{{- fail "APF identities must be provisioned before Helm; use global.apf.tls.mode=existingSecret with externally managed certificate Secrets instead of the gateway certManager subchart mode" -}}{{- end -}}
+{{- range $image := list $apf.policyServiceImage $apf.policyGatewayImage -}}
+{{- if not (regexMatch "^[^[:space:]@]+@sha256:[a-f0-9]{64}$" $image) -}}{{- fail "APF requires compatible digest-pinned service and gateway images" -}}{{- end -}}
+{{- end -}}
+{{- $name := printf "%s-apf" .Release.Name -}}
+{{- $pullSecrets := deepCopy $apf.imagePullSecrets -}}
+{{- if .Values.platform.openshift.enabled -}}
+{{- /* Explicit GHCR references must not hide OpenShift's managed pull Secret.
+On initial install the namespace default account already owns registry auth;
+subsequent upgrades use this release's dedicated account instead. */ -}}
+{{- $account := lookup "v1" "ServiceAccount" .Release.Namespace $name -}}
+{{- if not $account -}}{{- $account = lookup "v1" "ServiceAccount" .Release.Namespace "default" -}}{{- end -}}
+{{- $seen := dict -}}
+{{- range $entry := $pullSecrets -}}{{- $_ := set $seen $entry.name true -}}{{- end -}}
+{{- range $entry := $account.imagePullSecrets -}}
+{{- if not (hasKey $seen $entry.name) -}}
+{{- $pullSecrets = append $pullSecrets (dict "name" $entry.name) -}}
+{{- $_ := set $seen $entry.name true -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- $gateway := include "openshell.fullname" .Subcharts.openshell }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}-input
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "nemoclaw-openshell.labels" . | nindent 4 }}
+data:
+  bootstrap.json: |
+    {{- dict "namespace" .Release.Namespace "release" .Release.Name "apfName" $name "gatewayName" $gateway "gatewayId" (.Values.openshell.server.sandboxJwt.gatewayId | default $gateway) "gatewayTlsSecret" .Values.openshell.server.tls.certSecretName "gatewayClientCaSecret" .Values.openshell.server.tls.clientCaSecretName "gatewayClientTlsSecret" .Values.openshell.server.tls.clientTlsSecretName "gatewayJwtSecret" (include "openshell.sandboxJwtSecretName" .Subcharts.openshell) "revision" $apf.revision "tlsMode" $apf.tls.mode | toPrettyJson | nindent 4 }}
+---
+{{- range $kind := list "state" "audit" }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $name }}-{{ $kind }}
+  namespace: {{ $.Release.Namespace }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- if $apf.storageClass }}
+  storageClassName: {{ $apf.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ ternary $apf.stateSize $apf.auditSize (eq $kind "state") | quote }}
+---
+{{- end }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}-callback-token
+  namespace: {{ .Release.Namespace }}
+rules:
+  - apiGroups: [""]
+    resources: [serviceaccounts/token]
+    resourceNames: [{{ $name }}]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}-callback-token
+  namespace: {{ .Release.Namespace }}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: {{ $name }}-callback-token}
+subjects:
+  - {kind: ServiceAccount, name: {{ $name }}, namespace: {{ .Release.Namespace }}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector: {app.kubernetes.io/name: {{ $name }}, app.kubernetes.io/instance: {{ .Release.Name }}}
+  ports:
+    - {name: admission, port: 18081, targetPort: admission}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: {{ $name }}, app.kubernetes.io/instance: {{ .Release.Name }}}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/name: {{ include "openshell.name" .Subcharts.openshell }}, app.kubernetes.io/instance: {{ .Release.Name }}}
+      ports: [{protocol: TCP, port: 18081}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app.kubernetes.io/name: {{ $name }}, app.kubernetes.io/instance: {{ .Release.Name }}}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: {{ $name }}, app.kubernetes.io/instance: {{ .Release.Name }}}
+      annotations:
+        apf.nvidia.com/revision: {{ $apf.revision | quote }}
+        {{- if .Values.platform.openshift.enabled }}
+        openshift.io/required-scc: restricted-v2
+        {{- end }}
+    spec:
+      serviceAccountName: {{ $name }}
+      automountServiceAccountToken: false
+      {{- with $pullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
+        {{- if not .Values.platform.openshift.enabled }}
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        {{- end }}
+      initContainers:
+        - name: prepare
+          image: {{ $apf.policyServiceImage | quote }}
+          command: [/bin/sh, -ec]
+          args:
+            - |
+              umask 077
+              tar xzf /bundle-source/bundle.tar.gz -C /bundle --no-same-owner --no-same-permissions --no-overwrite-dir
+              mkdir -p /private/interceptor /private/callback
+              cp /interceptor-source/* /private/interceptor/
+              cp /callback-source/* /private/callback/
+              chmod 0400 /private/interceptor/* /private/callback/*
+          securityContext: &security
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          resources: {{- toYaml $apf.resources | nindent 12 }}
+          volumeMounts:
+            - {name: bundle-source, mountPath: /bundle-source, readOnly: true}
+            - {name: bundle, mountPath: /bundle}
+            - {name: interceptor-source, mountPath: /interceptor-source, readOnly: true}
+            - {name: callback-source, mountPath: /callback-source, readOnly: true}
+            - {name: private, mountPath: /private}
+      containers:
+        - name: callback-identity
+          image: {{ .Values.artifacts.utilityImage | quote }}
+          command: [/usr/local/bin/python3, -B, /runtime/apf_token.py]
+          securityContext: *security
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {cpu: 100m, memory: 128Mi}
+          env:
+            - {name: OPENSHELL_OIDC_AUDIENCE, value: {{ .Values.openshell.server.oidc.audience | quote }}}
+            - {name: OPENSHELL_OIDC_ADMIN_ROLE, value: {{ .Values.openshell.server.oidc.adminRole | quote }}}
+            - {name: OPENSHELL_ADMIN_TOKEN_EXPIRATION_SECONDS, value: "600"}
+            - {name: KUBERNETES_API_TOKEN, value: /kube/token}
+            - {name: KUBERNETES_API_CA, value: /kube/ca.crt}
+            - {name: POD_NAMESPACE, value: {{ .Release.Namespace | quote }}}
+            - {name: POD_SERVICE_ACCOUNT, value: {{ $name | quote }}}
+            - name: POD_NAME
+              valueFrom: {fieldRef: {fieldPath: metadata.name}}
+            - name: POD_UID
+              valueFrom: {fieldRef: {fieldPath: metadata.uid}}
+          volumeMounts:
+            - {name: runtime, mountPath: /runtime, readOnly: true}
+            - {name: kube-api, mountPath: /kube, readOnly: true}
+            - {name: callback-token, mountPath: /callback-token}
+        - name: policy-service
+          image: {{ $apf.policyServiceImage | quote }}
+          securityContext: *security
+          args:
+            - --socket=/run/apf/sock/policy-service.sock
+            - --policy-source=local
+            - --bundle-path=/bundle/bundle/manifest.yaml
+            - --trust-root-dir=/trust
+            - --document-signing-key=/signing/document-signing.seed
+            - --document-key-id={{ $name }}
+            - --document-ttl-secs={{ $apf.documentTtlSeconds }}
+            - --http-addr=127.0.0.1:19200
+            - --http-bearer-token-file=/signing/token
+            - --surfaces=openshell.sandbox.v1,openshell.provider-profile.v1,apf.policy.v1
+            - --audit-log-dir=/audit
+          resources: {{- toYaml $apf.resources | nindent 12 }}
+          readinessProbe:
+            exec: {command: [/usr/bin/curl, --fail, --silent, --output, /dev/null, 'http://127.0.0.1:19200/readyz']}
+            periodSeconds: 5
+          volumeMounts:
+            - {name: socket, mountPath: /run/apf}
+            - {name: state, mountPath: /var/lib/apf}
+            - {name: audit, mountPath: /audit}
+            - {name: bundle, mountPath: /bundle, readOnly: true}
+            - {name: trust, mountPath: /trust, readOnly: true}
+            - {name: signing, mountPath: /signing, readOnly: true}
+        - name: policy-gateway
+          image: {{ $apf.policyGatewayImage | quote }}
+          securityContext: *security
+          args:
+            - --socket=/run/apf-gateway/sock/policy-gateway.sock
+            - --policy-service-socket=/run/apf/sock/policy-service.sock
+            - --document-kind=openshell.sandbox.v1
+            - --document-name=default
+            - --document-key-id={{ $name }}
+            - --jwks-url=http://127.0.0.1:19200/.well-known/jwks.json
+            - --openshell-interceptor-addr=0.0.0.0:18081
+            - --openshell-interceptor-tls-cert-file=/private/interceptor/tls.crt
+            - --openshell-interceptor-tls-key-file=/private/interceptor/tls.key
+            - --openshell-interceptor-auth-trust-file=/private/interceptor/trust.toml
+            - --openshell-compute-driver=kubernetes
+            - --openshell-gateway-url=https://{{ $gateway }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.openshell.service.port }}
+            - --openshell-gateway-ca-file=/private/callback/ca.crt
+            - --openshell-gateway-token-file=/callback-token/identity/token
+            - --audit-log-dir=/audit
+          resources: {{- toYaml $apf.resources | nindent 12 }}
+          ports: [{name: admission, containerPort: 18081}]
+          readinessProbe:
+            tcpSocket: {port: admission}
+            periodSeconds: 5
+          volumeMounts:
+            - {name: socket, mountPath: /run/apf}
+            - {name: gateway-socket, mountPath: /run/apf-gateway}
+            - {name: state, mountPath: /var/lib/apf}
+            - {name: audit, mountPath: /audit}
+            - {name: private, mountPath: /private, readOnly: true}
+            - {name: callback-token, mountPath: /callback-token, readOnly: true}
+      volumes:
+        - {name: socket, emptyDir: {}}
+        - {name: gateway-socket, emptyDir: {}}
+        - {name: private, emptyDir: {medium: Memory}}
+        - {name: bundle, emptyDir: {}}
+        - {name: state, persistentVolumeClaim: {claimName: {{ $name }}-state}}
+        - {name: audit, persistentVolumeClaim: {claimName: {{ $name }}-audit}}
+        - {name: bundle-source, configMap: {name: {{ $name }}-bundle}}
+        - {name: trust, configMap: {name: {{ $name }}-trust}}
+        - {name: signing, secret: {secretName: {{ $name }}-signing}}
+        - name: interceptor-source
+          projected:
+            sources:
+              - secret:
+                  name: {{ $name }}-interceptor-tls
+                  items: [{key: tls.crt, path: tls.crt}, {key: tls.key, path: tls.key}]
+              - configMap:
+                  name: {{ $name }}-extension-trust
+                  items: [{key: trust.toml, path: trust.toml}]
+        - {name: callback-source, configMap: {name: {{ $name }}-gateway-ca}}
+        - {name: callback-token, emptyDir: {medium: Memory}}
+        - {name: runtime, configMap: {name: {{ include "nemoclaw-openshell.fullname" . }}-runtime}}
+        - name: kube-api
+          projected:
+            defaultMode: 0440
+            sources:
+              - serviceAccountToken: {path: token, expirationSeconds: 600}
+              - configMap:
+                  name: kube-root-ca.crt
+                  items: [{key: ca.crt, path: ca.crt}]
+{{- end }}

@@ -7,6 +7,8 @@ Gateway pod template shared by the StatefulSet and Deployment workload shapes.
 */}}
 {{- define "openshell.gatewayPodTemplate" -}}
 {{- $gatewaySecurityContext := deepCopy .Values.securityContext -}}
+{{- $apf := (index (.Values.global | default dict) "apf") | default dict -}}
+{{- $managedPki := and .Values.pkiInitJob.enabled (not $apf.enabled) -}}
 {{- $gatewayUidConfig := .Values.server.openshift.gatewayUid -}}
 {{- if $gatewayUidConfig.enabled -}}
   {{- $gatewayUid := $gatewayUidConfig.value -}}
@@ -127,6 +129,11 @@ spec:
         - name: sandbox-jwt
           mountPath: /etc/openshell-jwt
           readOnly: true
+        {{- if $apf.enabled }}
+        - name: apf-ca
+          mountPath: /etc/apf-ca
+          readOnly: true
+        {{- end }}
         {{- if not .Values.server.disableTls }}
         - name: tls-cert
           mountPath: /etc/openshell-tls/server
@@ -136,7 +143,7 @@ spec:
           mountPath: /etc/openshell-tls/server-external
           readOnly: true
         {{- end }}
-        {{- if or .Values.server.tls.clientCaSecretName (and .Values.pkiInitJob.enabled (not .Values.certManager.enabled)) (and .Values.certManager.enabled .Values.certManager.clientCaFromServerTlsSecret) }}
+        {{- if or .Values.server.tls.clientCaSecretName (and $managedPki (not .Values.certManager.enabled)) (and .Values.certManager.enabled .Values.certManager.clientCaFromServerTlsSecret) }}
         - name: tls-client-ca
           mountPath: /etc/openshell-tls/client-ca
           readOnly: true
@@ -197,6 +204,11 @@ spec:
       secret:
         secretName: {{ include "openshell.sandboxJwtSecretName" . }}
         defaultMode: {{ .Values.server.sandboxJwt.secretDefaultMode | default 0400 }}
+    {{- if $apf.enabled }}
+    - name: apf-ca
+      configMap:
+        name: {{ .Release.Name }}-apf-ca
+    {{- end }}
     {{- if not .Values.server.disableTls }}
     - name: tls-cert
       secret:
@@ -206,10 +218,10 @@ spec:
       secret:
         secretName: {{ include "openshell.fullname" . }}-server-external-tls
     {{- end }}
-    {{- if or .Values.server.tls.clientCaSecretName (and .Values.pkiInitJob.enabled (not .Values.certManager.enabled)) (and .Values.certManager.enabled .Values.certManager.clientCaFromServerTlsSecret) }}
+    {{- if or .Values.server.tls.clientCaSecretName (and $managedPki (not .Values.certManager.enabled)) (and .Values.certManager.enabled .Values.certManager.clientCaFromServerTlsSecret) }}
     - name: tls-client-ca
       secret:
-        {{- if or (and .Values.pkiInitJob.enabled (not .Values.certManager.enabled)) (and .Values.certManager.enabled .Values.certManager.clientCaFromServerTlsSecret) }}
+        {{- if or (and $managedPki (not .Values.certManager.enabled)) (and .Values.certManager.enabled .Values.certManager.clientCaFromServerTlsSecret) }}
         secretName: {{ .Values.server.tls.certSecretName }}
         items:
           - key: ca.crt

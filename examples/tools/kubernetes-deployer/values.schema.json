@@ -3,6 +3,37 @@
   "type": "object",
   "additionalProperties": true,
   "properties": {
+    "global": {
+      "type": "object",
+      "properties": {
+        "platformBootstrap": {
+          "type": "object", "additionalProperties": false,
+          "properties": {"createClusterRbac": {"type": "boolean"}}
+        },
+        "apf": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "policyServiceImage": {"type": "string", "pattern": "^$|^[^\\s@]+@sha256:[a-f0-9]{64}$"},
+            "policyGatewayImage": {"type": "string", "pattern": "^$|^[^\\s@]+@sha256:[a-f0-9]{64}$"},
+            "imagePullSecrets": {
+              "type": "array",
+              "items": {"type": "object", "additionalProperties": false,
+                "required": ["name"], "properties": {"name": {"type": "string", "minLength": 1}}}
+            },
+            "tls": {"type": "object", "additionalProperties": false,
+              "properties": {"mode": {"enum": ["generated", "existingSecret"]}}},
+            "storageClass": {"type": "string"},
+            "stateSize": {"type": "string", "minLength": 1},
+            "auditSize": {"type": "string", "minLength": 1},
+            "revision": {"type": "integer", "minimum": 1},
+            "documentTtlSeconds": {"type": "integer", "minimum": 120, "maximum": 3600},
+            "resources": {"type": "object"}
+          }
+        }
+      }
+    },
     "imagePullSecrets": {
       "type": "array",
       "items": {
@@ -1286,7 +1317,7 @@
           "maximum": 3600
         },
         "ttlSecondsAfterFinished": {
-          "type": "integer",
+          "type": ["integer", "null"],
           "minimum": 0
         },
         "plugins": {
@@ -1311,7 +1342,6 @@
         "dangerousAcknowledgement",
         "backoffLimit",
         "activeDeadlineSeconds",
-        "ttlSecondsAfterFinished",
         "plugins"
       ]
     },

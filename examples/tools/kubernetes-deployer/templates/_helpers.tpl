@@ -18,6 +18,12 @@
 {{- end -}}
 {{- end -}}
 
+{{- define "nemoclaw-openshell.seedJobName" -}}
+{{- $suffix := printf "-seed-%d" .Release.Revision -}}
+{{- $prefix := trunc (int (sub 63 (len $suffix))) (include "nemoclaw-openshell.fullname" .) | trimSuffix "-" -}}
+{{- printf "%s%s" $prefix $suffix -}}
+{{- end -}}
+
 {{- define "nemoclaw-openshell.labels" -}}
 helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
 {{ include "nemoclaw-openshell.selectorLabels" . }}

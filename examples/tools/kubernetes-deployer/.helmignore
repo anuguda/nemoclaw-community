@@ -2,6 +2,7 @@
 # runtime scripts, and the vendored OpenShell subchart only.
 /docs/
 tests/
+/scripts/
 __pycache__/
 *.pyc
 .DS_Store

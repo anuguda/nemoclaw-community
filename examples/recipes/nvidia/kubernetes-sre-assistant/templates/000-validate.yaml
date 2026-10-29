@@ -2,6 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 {{- $sre := .Values.global.sre -}}
 {{- $deployer := .Values.deployer -}}
+{{- if and (not (dig "platformBootstrap" "createClusterRbac" true .Values.global)) .Values.autoheal.enabled -}}
+{{- fail "namespace-only APF installation requires autoheal.enabled=false; autonomous controller RBAC must be separately provisioned" -}}
+{{- end -}}
 {{- /* Deterministic names: this chart derives <release>-deployer-* without templated subchart values. */ -}}
 {{- if ne (toString (default "" $deployer.nameOverride)) "deployer" -}}
 {{- fail "deployer.nameOverride must stay \"deployer\"; this chart derives the deployer's resource names from it" -}}
@@ -36,6 +39,9 @@
 {{- /* Access modes and acknowledgements. */ -}}
 {{- if not (has $sre.rbac.mode (list "read-only" "safe" "broad-no-delete" "protected-advanced")) -}}
 {{- fail "global.sre.rbac.mode must be read-only, safe, broad-no-delete or protected-advanced" -}}
+{{- end -}}
+{{- if and $sre.rbac.writeNamespaces (ne $sre.rbac.mode "protected-advanced") -}}
+{{- fail "global.sre.rbac.writeNamespaces requires protected-advanced mode; other proxy modes do not enforce that write boundary" -}}
 {{- end -}}
 {{- if and (eq $sre.rbac.mode "broad-no-delete") (ne $sre.rbac.dangerousAcknowledgement "I_ACKNOWLEDGE_CLUSTER_WIDE_NO_DELETE") -}}
 {{- fail "global.sre.rbac.dangerousAcknowledgement must equal I_ACKNOWLEDGE_CLUSTER_WIDE_NO_DELETE for broad-no-delete mode" -}}

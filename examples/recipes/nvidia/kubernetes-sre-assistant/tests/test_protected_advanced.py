@@ -64,6 +64,15 @@ class ProtectedAdvancedTest(unittest.TestCase):
             self.assertFalse(self.allowed(path, 'DELETE'))
         self.assertFalse(proxy.request_allowed('/api/v1/namespaces/team-a/pods/test', 'DELETE', 'general'))
 
+    def test_canary_write_namespace_does_not_expand_cluster_reads_or_other_writes(self):
+        with patch.dict(os.environ, {'PROXY_WRITE_NAMESPACES': 'models'}):
+            self.assertTrue(self.allowed('/apis/apps/v1/namespaces/models/deployments', 'POST'))
+            for namespace in ['another-team', 'models-other', 'default', 'kube-system']:
+                self.assertFalse(self.allowed(f'/apis/apps/v1/namespaces/{namespace}/deployments/test', 'PATCH'))
+            self.assertTrue(self.allowed('/api/v1/nodes', 'GET'))
+            self.assertTrue(self.allowed('/api/v1/namespaces/another-team/pods', 'GET'))
+            self.assertFalse(self.allowed('/api/v1/namespaces/models/secrets/private', 'GET'))
+
     def test_model_inference_proxy_is_bounded(self):
         base = '/api/v1/namespaces/models/services/http:test:8000/proxy/v1/chat/completions'
         with patch.dict(os.environ, {'PROXY_SERVICE_PROXY_NAMESPACE':'models'}):

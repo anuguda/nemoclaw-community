@@ -25,6 +25,9 @@
 {{- fail "lifecycle.seed.dangerousAcknowledgement must equal I_ACKNOWLEDGE_SANDBOX_STOPPED before remounting the Hermes PVC during an upgrade" -}}
 {{- end -}}
 {{- $issuerDiscovery := .Values.platform.serviceAccountIssuerDiscovery -}}
+{{- if and (not .Values.global.platformBootstrap.createClusterRbac) $issuerDiscovery.createPublicBinding -}}
+{{- fail "namespace installation requires preprovisioned OIDC discovery: set createPublicBinding=false and preexistingAnonymousAccess=true" -}}
+{{- end -}}
 {{- /*
 Both spellings of the in-cluster ServiceAccount issuer need the same
 discovery decision. OpenShift publishes the short form; a default kubeadm

@@ -22,6 +22,13 @@ spec:
             matchLabels:
               {{- include "nemoclaw-openshell.selectorLabels" . | nindent 14 }}
               app.kubernetes.io/component: bootstrap
+        {{- if .Values.global.apf.enabled }}
+        # APF reconciliation uses verified TLS and its Pod-bound OIDC identity.
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ printf "%s-apf" .Release.Name }}
+              app.kubernetes.io/instance: {{ .Release.Name }}
+        {{- end }}
         {{- if .Values.operatorClient.enabled }}
         # Attach-only operator terminal. Its projected token maps to the
         # OpenShell user role; lifecycle admin is a separate audience.

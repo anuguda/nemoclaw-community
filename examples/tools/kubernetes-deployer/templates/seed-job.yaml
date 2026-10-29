@@ -1,8 +1,6 @@
 {{- if and .Values.lifecycle.seed.enabled (or (not .Release.IsUpgrade) .Values.lifecycle.seed.runOnUpgrade) }}
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-{{- $seedSuffix := printf "-seed-%d" .Release.Revision }}
-{{- $seedPrefix := trunc (int (sub 63 (len $seedSuffix))) (include "nemoclaw-openshell.fullname" .) | trimSuffix "-" }}
 {{- $managedOpenShift := and .Values.platform.openshift.enabled (eq .Values.openshell.mode "managed") .Values.openshell.server.openshift.sandboxUid.enabled }}
 {{- $sandboxUid := 0 }}
 {{- if $managedOpenShift }}
@@ -27,14 +25,16 @@ metadata:
   # This Job is deliberately a normal Helm resource, not a post-install hook.
   # Its Pod is the first consumer that allows WaitForFirstConsumer storage
   # classes to bind the retained state PVC before Helm runs post-install hooks.
-  name: {{ printf "%s%s" $seedPrefix $seedSuffix }}
+  name: {{ include "nemoclaw-openshell.seedJobName" . }}
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "nemoclaw-openshell.labels" . | nindent 4 }}
 spec:
   backoffLimit: {{ .Values.lifecycle.seed.backoffLimit }}
   activeDeadlineSeconds: {{ .Values.lifecycle.seed.activeDeadlineSeconds }}
+  {{- if ne .Values.lifecycle.seed.ttlSecondsAfterFinished nil }}
   ttlSecondsAfterFinished: {{ .Values.lifecycle.seed.ttlSecondsAfterFinished }}
+  {{- end }}
   template:
     metadata:
       labels:

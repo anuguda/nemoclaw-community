@@ -18,7 +18,7 @@ global:
       # and the ordered ConfigMap chunk names (files/sre-skills.parts.json).
       # scripts/build-sre-skills-bundle.py rewrites both; rendering fails when
       # they disagree with the committed files.
-      sha256: 5251a36f5c6cb526a4244dbe447233253862d4d0df3fc3dc3381d3dd64b1d7ee
+      sha256: bd428a9ccf2c0cbed7b2b92d6666ff9e8876618debb115d55128195f4d205699
       parts:
         - sre-skills.part-000
     # Immutable multi-architecture Python image for the API proxies and the
@@ -58,6 +58,9 @@ global:
       # cluster-scoped mutations and PVC deletion are denied by the API proxy.
       mode: safe
       dangerousAcknowledgement: ""
+      # Optional write boundary for protected-advanced mode. Reads remain
+      # cluster-wide; an APF canary should name only its model/test namespace.
+      writeNamespaces: []
     proxy:
       port: 8001
       # Empty name creates a random chart-managed Secret and preserves it across

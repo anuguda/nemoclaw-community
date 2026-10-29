@@ -133,8 +133,7 @@ def claim_state_for_reconciliation() -> None:
     ``existing_owner`` and ``refuse_unmarked_populated_state`` are read-only, so
     a claim owned by another release or an unmarked populated claim is never
     changed. Writing the ``seeding`` marker first lets the same release resume
-    after any later failure while ``wait_seed.py`` still refuses to treat the
-    revision as complete.
+    after any later failure. The observer accepts only successful Job completion.
     """
     if existing_owner() is None:
         refuse_unmarked_populated_state()

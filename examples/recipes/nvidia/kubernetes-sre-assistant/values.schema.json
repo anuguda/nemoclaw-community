@@ -71,6 +71,10 @@
               "type": "object",
               "additionalProperties": false,
               "properties": {
+                "writeNamespaces": {
+                  "type": "array", "uniqueItems": true,
+                  "items": {"type": "string", "maxLength": 63, "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"}
+                },
                 "mode": {
                   "type": "string",
                   "enum": [

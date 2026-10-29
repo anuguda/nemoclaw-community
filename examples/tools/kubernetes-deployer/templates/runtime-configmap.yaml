@@ -140,6 +140,7 @@ it was not seeded with.
       "startupContract" $startupContract
       "operatorClient" $operatorClient
       "accessRelay" $accessRelay
+      "apfEnabled" .Values.global.apf.enabled
 }}
 apiVersion: v1
 kind: ConfigMap
@@ -161,6 +162,10 @@ data:
     {{- include "nemoclaw-openshell.slackProvider" . | nindent 4 }}
   bootstrap.py: |
     {{- .Files.Get "files/scripts/bootstrap.py" | nindent 4 }}
+  {{- if .Values.global.apf.enabled }}
+  apf_token.py: |
+    {{- .Files.Get "files/scripts/apf_token.py" | nindent 4 }}
+  {{- end }}
   {{- if .Values.operatorClient.enabled }}
   operator_client.py: |
     {{- .Files.Get "files/scripts/operator_client.py" | nindent 4 }}

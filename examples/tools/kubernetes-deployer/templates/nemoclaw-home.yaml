@@ -24,26 +24,21 @@ spec:
   resources:
     requests:
       storage: {{ .Values.agent.nemoclawHome.size }}
+{{- if or (not .Release.IsUpgrade) .Values.lifecycle.seed.runOnUpgrade }}
 ---
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ include "nemoclaw-openshell.nemoclawHomePrepareName" . }}
+  name: {{ include "nemoclaw-openshell.nemoclawHomePrepareName" . }}-{{ .Release.Revision }}
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "nemoclaw-openshell.labels" . | nindent 4 }}
     app.kubernetes.io/component: nemoclaw-home
   annotations:
-    # Runs before the bootstrap hook (weight 10) so the Sandbox mounts a
-    # prepared volume. The first read-write mount also formats the claim.
-    helm.sh/hook: post-install,post-upgrade
-    helm.sh/hook-weight: "5"
-    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
     nemoclaw.nvidia.com/security-impact: root-job-prepares-read-only-nemoclaw-state-volume
 spec:
   backoffLimit: 2
   activeDeadlineSeconds: 300
-  ttlSecondsAfterFinished: 600
   template:
     metadata:
       labels:
@@ -54,7 +49,7 @@ spec:
         openshift.io/required-scc: privileged
       {{- end }}
     spec:
-      restartPolicy: OnFailure
+      restartPolicy: Never
       # The sandbox ServiceAccount already carries the privileged admission the
       # OpenShell supervisor needs; this Job reuses it for a root filesystem fix.
       serviceAccountName: {{ include "nemoclaw-openshell.sandboxServiceAccountName" . }}
@@ -139,4 +134,5 @@ spec:
         - name: nemoclaw-home
           persistentVolumeClaim:
             claimName: {{ $claim }}
+{{- end }}
 {{- end }}

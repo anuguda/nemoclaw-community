@@ -9,6 +9,7 @@ metadata:
     {{- include "sre-assistant.labels" . | nindent 4 }}
 automountServiceAccountToken: true
 ---
+{{- if dig "platformBootstrap" "createClusterRbac" true (.Values.global | default dict) }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -160,3 +161,4 @@ subjects:
   - kind: ServiceAccount
     name: {{ include "sre-assistant.proxyName" . }}
     namespace: {{ .Release.Namespace }}
+{{- end }}

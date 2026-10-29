@@ -82,9 +82,33 @@ def resolve_deployment_identity(arguments) -> None:
         arguments.expose = arguments.platform == 'openshift'
 
 
+def emit_plan(plan, arguments, artifacts, root):
+    payload = (json.dumps(plan, sort_keys=True, separators=(',', ':')) + '\n').encode()
+    plan_path = artifacts / 'deployment-plan.json'
+    with plan_path.open('xb') as destination:
+        os.chmod(plan_path, 0o600)
+        destination.write(payload)
+    print('HF_PREFLIGHT_PLAN=' + str(plan_path))
+    digest = hashlib.sha256(payload).hexdigest()
+    print('HF_PREFLIGHT_PLAN_SHA256=' + digest)
+    validation_command = shlex.join([sys.executable, str(root / 'scripts/deploy-plan.py'),
+                                     '--plan', str(plan_path), '--approved-plan-sha256', digest])
+    print('HF_PREFLIGHT_VALIDATE_COMMAND=' + validation_command)
+    print('HF_PREFLIGHT_DEPLOY_COMMAND=' + validation_command + ' --confirm')
+    print('HF_PREFLIGHT_NAMESPACE=' + arguments.namespace)
+    print('HF_PREFLIGHT_RELEASE=' + arguments.release)
+    print('HF_PREFLIGHT_MEMORY_REQUEST=' + plan['options']['memory-request'])
+    print('HF_PREFLIGHT_MEMORY_LIMIT=' + plan['options']['memory-limit'])
+    print('HF_PREFLIGHT_EXPOSE=' + str(arguments.expose).lower())
+    print('HF_PREFLIGHT_STATUS=ready')
+    print('HF_PREFLIGHT_FINAL_CONFIRMATION=required')
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description='Bounded read-only model preflight; never authorizes deployment.')
     parser.add_argument('--model', required=True)
+    parser.add_argument('--runtime', choices=('gpu', 'cpu'), default='gpu')
     parser.add_argument('--namespace', required=True)
     parser.add_argument('--release', help='Optional model-derived release; mismatches are rejected.')
     parser.add_argument('--storage-class', required=True)
@@ -116,6 +140,9 @@ def main() -> int:
         except PreflightError as error:
             raise PreflightError('model-runner-unavailable:' + arguments.namespace + '/' + runner) from error
         print('HF_PREFLIGHT_MODEL_RUNNER=' + runner, flush=True)
+        if arguments.runtime == 'cpu':
+            import cpu_model
+            return emit_plan(cpu_model.plan(arguments, runner), arguments, artifacts, root)
         print('HF_PREFLIGHT_STAGE=token-reference', flush=True)
         token_check = ['/chart-bin/oc', '-n', arguments.namespace, 'get', 'secret',
                        intake['secretName'], '-o', 'name']
@@ -166,26 +193,7 @@ def main() -> int:
             runtime_command += ['--approved-planning-artifact', catalog['VLLM_RECIPE_ARTIFACT']]
         runtime = run_stage(runtime_command, deadline)
         plan = build_plan(arguments, intake, storage, gpu, runtime, catalog)
-        payload = (json.dumps(plan, sort_keys=True, separators=(',', ':')) + '\n').encode()
-        plan_path = artifacts / 'deployment-plan.json'
-        with plan_path.open('xb') as destination:
-            os.chmod(plan_path, 0o600)
-            destination.write(payload)
-        print('HF_PREFLIGHT_PLAN=' + str(plan_path))
-        digest = hashlib.sha256(payload).hexdigest()
-        print('HF_PREFLIGHT_PLAN_SHA256=' + digest)
-        validation_command = shlex.join([sys.executable, str(root / 'scripts/deploy-plan.py'),
-                                         '--plan', str(plan_path), '--approved-plan-sha256', digest])
-        print('HF_PREFLIGHT_VALIDATE_COMMAND=' + validation_command)
-        print('HF_PREFLIGHT_DEPLOY_COMMAND=' + validation_command + ' --confirm')
-        print('HF_PREFLIGHT_NAMESPACE=' + arguments.namespace)
-        print('HF_PREFLIGHT_RELEASE=' + arguments.release)
-        print('HF_PREFLIGHT_MEMORY_REQUEST=' + plan['options']['memory-request'])
-        print('HF_PREFLIGHT_MEMORY_LIMIT=' + plan['options']['memory-limit'])
-        print('HF_PREFLIGHT_EXPOSE=' + str(arguments.expose).lower())
-        print('HF_PREFLIGHT_STATUS=ready')
-        print('HF_PREFLIGHT_FINAL_CONFIRMATION=required')
-        return 0
+        return emit_plan(plan, arguments, artifacts, root)
     except (PreflightError, OSError, KeyError, TypeError, ValueError, yaml.YAMLError) as error:
         print('HF_PREFLIGHT_STATUS=blocked')
         print('HF_PREFLIGHT_REASON=' + str(error))

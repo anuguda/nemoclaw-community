@@ -50,6 +50,8 @@ spec:
               value: {{ ternary "protected-advanced" "general" (eq .Values.global.sre.rbac.mode "protected-advanced") }}
             - name: PROXY_PROTECTED_NAMESPACES
               value: {{ .Release.Namespace | quote }}
+            - name: PROXY_WRITE_NAMESPACES
+              value: {{ join "," .Values.global.sre.rbac.writeNamespaces | quote }}
             {{- if .Values.global.sre.openshiftLlmDeploy.enabled }}
             - name: PROXY_SERVICE_PROXY_NAMESPACE
               value: {{ include "sre-assistant.modelDeployNamespace" . | quote }}

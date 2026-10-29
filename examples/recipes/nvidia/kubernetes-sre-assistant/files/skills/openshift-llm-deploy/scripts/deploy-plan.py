@@ -36,6 +36,14 @@ def target_namespace() -> str:
 
 
 def deployment_command(plan: dict, target: str) -> list[str]:
+    if plan.get('schemaVersion') == 2:
+        import cpu_model
+        import yaml
+        root = Path(__file__).resolve().parents[1]
+        intake = yaml.safe_load((root / 'hf-token-intake.yaml').read_text())
+        cpu_model.validate(plan, target, intake['modelRunnerServiceAccount'])
+        return [sys.executable, str(Path(__file__).with_name('cpu_model.py')),
+                '--plan-json', json.dumps(plan, separators=(',', ':'))]
     if set(plan) != {'schemaVersion', 'createdAt', 'options', 'expose', 'checks'} or plan['schemaVersion'] != 1:
         raise ValueError('invalid-plan-schema')
     if type(plan['createdAt']) is not int or not 0 <= time.time() - plan['createdAt'] <= 1800:

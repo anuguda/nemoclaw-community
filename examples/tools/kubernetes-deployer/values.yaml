@@ -35,6 +35,32 @@ platform:
 
 imagePullSecrets: []
 
+# Shared with the vendored gateway and any umbrella chart. One switch governs
+# both halves; no independent gateway switch can leave APF silently bypassed.
+global:
+  platformBootstrap:
+    # Set false only after a cluster admin preprovisions the rendered gateway
+    # and SRE ClusterRoles/Bindings for these exact ServiceAccount names.
+    createClusterRbac: true
+  apf:
+    enabled: false
+    # Compatible OpenShell 0.0.116 builds; immutable references required.
+    policyServiceImage: ""
+    policyGatewayImage: ""
+    imagePullSecrets: []
+    tls:
+      # generated: provision with scripts/apf-bootstrap.py before installing.
+      # existingSecret: operator supplies the same documented identity contract.
+      mode: generated
+    storageClass: ""
+    stateSize: 1Gi
+    auditSize: 1Gi
+    revision: 1
+    documentTtlSeconds: 900
+    resources:
+      requests: {cpu: 100m, memory: 256Mi}
+      limits: {cpu: "2", memory: 2Gi}
+
 agent:
   # NemoClaw remains the managed runtime for both harnesses.
   runtime: hermes
@@ -182,7 +208,10 @@ lifecycle:
     dangerousAcknowledgement: ""
     backoffLimit: 2
     activeDeadlineSeconds: 300
-    ttlSecondsAfterFinished: 600
+    # A normal Helm resource must remain observable through the full --wait.
+    # Helm removes the old revision on upgrade; an optional TTL must exceed
+    # the entire installation window, not just the seed's execution time.
+    ttlSecondsAfterFinished: null
     # Seed plugins let a consuming chart populate chart-owned state (skills,
     # kubeconfigs, staged binaries) after the core seed has claimed the volume.
     # Each plugin ships a ConfigMap that is mounted at /plugins/<name>; its

@@ -1,6 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 {{- $seedRuns := and .Values.lifecycle.seed.enabled (or (not .Release.IsUpgrade) .Values.lifecycle.seed.runOnUpgrade) }}
+{{- $homeRuns := and .Values.agent.nemoclawHome.enabled (or (not .Release.IsUpgrade) .Values.lifecycle.seed.runOnUpgrade) }}
+{{- $observeRuns := or $seedRuns $homeRuns }}
+{{- $jobs := list }}
+{{- if $seedRuns }}{{- $jobs = append $jobs (include "nemoclaw-openshell.seedJobName" .) }}{{- end }}
+{{- if $homeRuns }}{{- $jobs = append $jobs (printf "%s-%d" (include "nemoclaw-openshell.nemoclawHomePrepareName" .) .Release.Revision) }}{{- end }}
 {{- if .Values.lifecycle.bootstrap.enabled }}
 apiVersion: batch/v1
 kind: Job
@@ -27,7 +32,8 @@ spec:
         openshift.io/required-scc: restricted-v2
       {{- end }}
     spec:
-      restartPolicy: OnFailure
+      # Keep failed attempts available for diagnosis.
+      restartPolicy: Never
       serviceAccountName: {{ include "nemoclaw-openshell.lifecycleServiceAccountName" . }}
       automountServiceAccountToken: false
       securityContext:
@@ -43,7 +49,7 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       initContainers:
-        {{- if $seedRuns }}
+        {{- if $observeRuns }}
         - name: wait-for-state-seed
           image: {{ .Values.artifacts.utilityImage | quote }}
           imagePullPolicy: IfNotPresent
@@ -51,8 +57,12 @@ spec:
           env:
             - name: RELEASE_ID
               value: {{ printf "%s/%s" .Release.Namespace .Release.Name | quote }}
-            - name: RELEASE_REVISION
-              value: {{ .Release.Revision | quote }}
+            - name: SEED_JOB_NAME
+              value: {{ join "," $jobs | quote }}
+            - name: KUBERNETES_API_TOKEN
+              value: /var/run/secrets/openshell-token-request/token
+            - name: KUBERNETES_API_CA
+              value: /var/run/secrets/openshell-token-request/ca.crt
             - name: SEED_WAIT_TIMEOUT_SECONDS
               value: {{ .Values.lifecycle.seed.activeDeadlineSeconds | quote }}
           securityContext:
@@ -65,11 +75,9 @@ spec:
             - name: runtime
               mountPath: /runtime
               readOnly: true
-            # Some CSI drivers require a read-write device mount while running
-            # filesystem permission and resize setup. Only this init container
-            # receives the state volume; the bootstrap container cannot access it.
-            - name: state
-              mountPath: /state
+            - name: kubernetes-api-token
+              mountPath: /var/run/secrets/openshell-token-request
+              readOnly: true
             - name: tmp
               mountPath: /tmp
         {{- end }}
@@ -228,12 +236,7 @@ spec:
                 path: tls.crt
               - key: tls.key
                 path: tls.key
-        {{- if $seedRuns }}
-        - name: state
-          persistentVolumeClaim:
-            claimName: {{ include "nemoclaw-openshell.stateClaimName" . }}
-        {{- end }}
-        {{- if eq .Values.lifecycle.bootstrap.authentication.mode "serviceAccountToken" }}
+        {{- if or $observeRuns (eq .Values.lifecycle.bootstrap.authentication.mode "serviceAccountToken") }}
         - name: kubernetes-api-token
           projected:
             defaultMode: 0440

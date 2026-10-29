@@ -57,6 +57,39 @@ repeated identical error. Never patch validators or fabricate recipe approvals.
 Use the configured model namespace for HF Secret existence checks; do not read
 Secret data. A discovery approval is not final deployment confirmation.
 
+## CPU-only validation model
+
+For an explicitly CPU-only request, use the reviewed llama.cpp recipe rather
+than GPU sizing, vLLM or Dynamo. The supported validation model is
+`Qwen/Qwen2.5-0.5B-Instruct-GGUF`, Q4_K_M (491,400,032 bytes).
+The helper pins its HF commit, file SHA-256 and multi-architecture server image.
+It requests 2 CPU / 1Gi memory, limits 4 CPU / 2Gi, uses a retained 2Gi PVC,
+and sets GPU layers to zero. No GPU resources, HF token or API token enter
+the model pod. This small validation model is not an SRE reasoning replacement.
+
+```sh
+/opt/hermes/.venv/bin/python "$HERMES_HOME/skills/openshift-llm-deploy/scripts/preflight-model.py" \
+  --runtime cpu --model Qwen/Qwen2.5-0.5B-Instruct-GGUF \
+  --namespace TARGET_NAMESPACE --storage-class STORAGE_CLASS \
+  --platform kubernetes --no-expose
+```
+
+Use `--platform openshift` on OpenShift. Keep `--no-expose` for private tests.
+The same saved-plan hash, 30-minute expiry and fresh final confirmation apply.
+Copy the emitted deployment command; never invoke `cpu_model.py` directly.
+The target must be the configured model namespace, separate from the protected
+SRE control-plane namespace. A Ready pod is not model validation: POST a real
+chat completion through the exact chart-authorized Service proxy path and
+record generated text, token counts and elapsed time. Never retry `pending`
+by creating a second release.
+
+Use `verify-openai-endpoint.sh --namespace TARGET_NAMESPACE --service RELEASE`
+for the smoke. Its bounded HTTPS client sends an explicit Content-Length through
+the existing authenticated proxy. Do not substitute `oc create --raw -f` for the
+completion POST: that client streams a chunked body, which the proxy rejects.
+Never enable chunked requests, insecure TLS or a broader proxy route to pass a
+model smoke. CPU readiness uses bounded Deployment GETs, not streaming watches.
+
 ## Bounded HF/GPU preflight
 
 Then run the bounded GPU/runtime planner before presenting a deployment plan.

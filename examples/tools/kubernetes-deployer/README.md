@@ -16,8 +16,8 @@
 | Reviewed | 2026-09-04 |
 | Upstream | https://github.com/NVIDIA/NemoClaw |
 
-A buildless Helm chart that runs the official NemoClaw-managed Hermes image
-through the official OpenShell gateway on Kubernetes or OpenShift. It is a
+A buildless Helm chart in its default APF-disabled mode, running the official
+NemoClaw-managed Hermes image behind OpenShell. It is a
 deployment utility, not an agent workflow: it does not invoke the NemoClaw CLI
 or bootstrap (hence `NemoClaw: N/A` above), and it ships no skills of its own.
 It delivers the access surfaces the
@@ -29,6 +29,153 @@ and a terminal session (`launch`/`connect`). Recipes such as
 layer skills, credentials, and policy onto this chart through its extension
 points. It does not include the third-party Hermes WebUI, SkillSpector, or
 NemoClaw recipe delivery.
+
+## Optional APF governance
+
+Set **`global.apf.enabled=true`**. The setting is global so the deployer,
+vendored OpenShell gateway and SRE umbrella chart use one switch. Hermes stays
+the default; the existing explicit OpenClaw overlay remains optional.
+
+APF governs OpenShell sandbox admission, signed runtime policy and provider
+profiles. It does **not** replace Kubernetes RBAC, the SRE HTTPS proxy, workload
+admission or per-tool human approval. A namespace administrator controlling
+the signing roots and workloads remains inside the trust boundary.
+
+| Setting | Contract |
+| --- | --- |
+| `global.apf.policyServiceImage`, `policyGatewayImage` | Required compatible immutable `@sha256:` references |
+| `global.apf.imagePullSecrets` | Existing namespace-local registry Secret references; never a PAT value |
+| `global.apf.tls.mode=generated` | Operator bootstrap creates independent workload CAs and identities; no cert-manager dependency |
+| `global.apf.tls.mode=existingSecret` | Operator supplies valid gateway/client/JWT and APF TLS Secrets; bootstrap verifies chains, validity, SANs and matching keys without replacing them |
+| `global.apf.revision` | Strictly increase when signed input changes; never reset retained counters |
+| `global.apf.storageClass` | RWO storage for separate retained counter and audit PVCs |
+| `global.platformBootstrap.createClusterRbac=false` | Namespace installer mode, only after platform bootstrap grants the rendered gateway/SRE identities their required cluster permissions |
+
+### Compatible images and registry access
+
+The gateway remains official **OpenShell 0.0.116**. Do not substitute an APF
+image targeting OpenShell 0.1.x or widen a protocol version guard. The complete
+compatibility source patch, pinned upstream commits and build recipe are in
+[`scripts/apf-build`](scripts/apf-build). The patch adds exact signed Kubernetes
+driver-envelope admission, including PVC claim identity, subpaths, resources
+and scheduling; mount-prefix rules alone cannot authorize this chart.
+
+Build from the pinned APF checkout, verify the patch SHA-256 against
+`source.json`, and apply it with `git apply`. Build the `policy-service` and
+`policy-gateway` targets using the provided Dockerfile and that checkout as
+the build context. Publish to an authorized registry and record the actual
+digests as `APF_SERVICE_IMAGE` and `APF_GATEWAY_IMAGE`. Public source access
+does not imply access to private GHCR packages.
+
+Create a dedicated **read:packages-only** credential, with package-owner/SSO
+access where required. The operator helper prompts without echoing the token:
+
+```sh
+python3 scripts/registry-pull-secret.py --context "$CONTEXT" \
+  --namespace "$NAMESPACE" --username "$GITHUB_USER" --name apf-ghcr-pull
+```
+
+`--token-stdin` supports a Keychain CLI pipeline without putting the token in
+argv. It creates, rather than silently replaces, the Secret. Helm receives only
+the reference:
+
+```yaml
+global:
+  apf:
+    enabled: true
+    imagePullSecrets:
+      - name: apf-ghcr-pull
+    tls:
+      mode: generated
+    revision: 1
+```
+
+OpenShift live rendering merges the dedicated ServiceAccount's managed pull
+references with these explicit references, falling back to the namespace's
+default ServiceAccount on first install. This preserves internal-registry
+authentication when GHCR credentials are also configured.
+
+### Bootstrap, sign, then install
+
+Use a fresh, dedicated release namespace. Install `pyyaml` and `cryptography`
+in the operator Python environment. Preprovision the model API-key Secret
+separately. Select `values-kubernetes.yaml` or `values-openshift.yaml` as
+`PLATFORM_VALUES`, and put the non-secret APF settings in `apf-values.yaml`.
+
+```sh
+umask 077
+helm --kube-context "$CONTEXT" template "$RELEASE" . \
+  --namespace "$NAMESPACE" --dry-run=server \
+  -f "$PLATFORM_VALUES" -f apf-values.yaml \
+  --set-string global.apf.policyServiceImage="$APF_SERVICE_IMAGE" \
+  --set-string global.apf.policyGatewayImage="$APF_GATEWAY_IMAGE" > rendered.yaml
+python3 scripts/apf-bootstrap.py --context "$CONTEXT" \
+  --manifests rendered.yaml --compiler-image "$APF_SERVICE_IMAGE"
+helm --kube-context "$CONTEXT" upgrade --install "$RELEASE" . \
+  --namespace "$NAMESPACE" -f "$PLATFORM_VALUES" -f apf-values.yaml \
+  --set-string global.apf.policyServiceImage="$APF_SERVICE_IMAGE" \
+  --set-string global.apf.policyGatewayImage="$APF_GATEWAY_IMAGE" \
+  --wait --timeout 15m
+```
+
+For the SRE chart, render/install that chart and run the deployer's operator
+helper against its rendered output. `--compiler-host` optionally runs Docker
+on a trusted SSH builder with verified host keys. The compiler consumes the
+owner key through stdin into container tmpfs, with networking disabled.
+Rendered SRE YAML can contain generated proxy credentials: keep it private,
+never commit it, and remove it after provisioning.
+
+Bootstrap signs the **full effective** policy after SRE/runtime overlays are
+merged, plus the exact driver envelope and provider profiles. No post-sign
+policy merge is allowed. Bundle-owner, document-signing, gateway-JWT and TLS
+identities are distinct and retained across retries. The owner key is never
+mounted into an agent or the APF runtime.
+
+APF uses verified HTTPS and typed, audience-bound extension JWTs. Its callback
+identity is a rotating, Pod-bound OIDC token, not unsupported Kubernetes mTLS
+user authentication. The gateway's legacy certificate-generation hooks are
+skipped because APF bootstrap/external provisioning owns those identities.
+Generated leaf certificates last 30 days; bundles last 7 days. Renewal and
+coordinated key rotation are operator responsibilities, not a production
+certificate automation claim. Incorrect hostname, CA, expiry or signatures
+must fail closed. The Kubernetes control-plane CA private key is never used.
+
+Before giving the agent work, verify the actual admitted policy signature and
+canonical spec digest, a real model turn, exact allowed/denied cluster access,
+and counter/audit persistence through APF restart. An APF outage must deny new
+admission; it does not automatically terminate an already-running agent.
+
+Collect the official `openshell.v1.OpenShell/GetSandbox` proto3-JSON response
+over the gateway's verified TLS connection with an authorized operator token.
+Use the public PEM from `<release>-apf-document-key` with
+`scripts/verify-apf-policy.py --response sandbox.json --public-key public.pem
+--sandbox <agent-name> --key-id <release>-apf --bundle-id <release>-apf
+--revision <approved-revision>`. Missing, expired, mismatched or tampered
+provenance fails verification; do not start model work until it passes.
+
+### Platform and namespace administrators
+
+A platform administrator installs Agent Sandbox CRDs/controller, approves the
+supervisor's privileged admission, grants gateway TokenReview/node/namespace
+permissions, and arranges trusted OIDC discovery/JWKS. An OpenShift project
+administrator cannot grant itself a privileged SCC; Kubernetes PSA also cannot
+be bypassed by a Helm value.
+
+After those prerequisites, a namespace administrator can create registry and
+model Secrets, provision/sign APF identities and install namespace resources
+with `global.platformBootstrap.createClusterRbac=false`. Set public discovery
+binding creation false and acknowledge preexisting anonymous discovery access;
+on OpenShift also disable SCC binding creation when it is already provisioned.
+For the SRE chart, keep `autoheal.enabled=false` in this installer mode; that
+separate controller's cluster RBAC is outside this option's scope. APF
+callback reconciliation itself needs only the chart's exact-ServiceAccount,
+namespace-local TokenRequest Role, not cluster-admin.
+
+APF counters and audit use separate retained single-writer PVCs with `Recreate`.
+Back up those volumes and signing identities together. This is not HA or a
+malicious-administrator boundary. Enabling APF on an existing release requires
+reviewed identity adoption/maintenance, not implicit replacement of legacy
+certificates or trust roots.
 
 ## Screenshot
 
@@ -101,7 +248,8 @@ kubectl port-forward ───────────────────�
   immutable digest (linux/amd64 manifest); override it with the cluster's
   release-payload `oauth-proxy` image on other architectures
 
-No Dockerfile or image build is part of installation.
+No image build is required for the default APF-disabled installation. Optional
+APF requires the compatible, pinned runtime builds described above.
 
 This chart pins the managed NemoClaw image to `v0.0.117` with Hermes `0.19.0`.
 A contributor's earlier evaluation of NemoClaw `v0.0.124` with Hermes `0.20.6`
@@ -451,10 +599,21 @@ the official `/usr/local/bin/nemoclaw-start` the supervisor's direct child.
 This is a runtime compatibility step only; it does not build or replace the
 official image and does not weaken NemoClaw's own startup attestation.
 
+On native Kubernetes, UID 1000 is otherwise shared with unrelated node workloads.
+NemoClaw's fixed `RLIMIT_NPROC=512` counts threads for that host UID, not just
+this container. On the tested native node, 1,369 UID-1000 threads caused the
+canonical process to exit 254. A restricted Pod with `hostUsers:false` verified
+an isolated UID map and successful execution under the unchanged 512 limit.
+Where the kubelet/runtime/filesystem support user namespaces and idmapped PVC
+mounts, set `openshell.server.enableUserNamespaces=true` (under `deployer` in the
+SRE umbrella). The tested native canary became Ready with that setting.
+Do not increase/disable the image's process limit or enable this on OpenShift;
+the OpenShift profile uses its distinct namespace-allocated UID instead.
+
 The profile does not expose the OpenShell gateway with an OpenShift Route: the
-bootstrap path is cluster-internal and mTLS-protected. Operators can configure
-the upstream chart's Route separately only when external gateway access is
-required and the certificate SANs have been prepared.
+bootstrap path uses cluster-internal verified TLS and configured lifecycle
+authentication. Operators can configure the upstream chart's Route separately
+only when external gateway access is required and certificate SANs are prepared.
 
 The chart does not auto-detect OpenShift: an auto-detected render can differ between CI, GitOps, and the target cluster.
 
@@ -488,6 +647,17 @@ anything. It reads the ownership marker first, refuses a claim owned by another
 release, and refuses an unmarked claim that already holds content; both are
 left byte-for-byte and mode-for-mode unchanged. Only a fresh volume (empty
 apart from `lost+found`) or this release's own claim is seeded.
+
+The seed and read-only NemoClaw-home preparation Jobs are normal Helm resources,
+not post-install hooks. This lets `WaitForFirstConsumer` storage bind before
+Helm waits for PVC readiness. Bootstrap observes their exact names using a
+namespace Role with `jobs/get` and `resourceNames`; it never mounts the state
+PVC. An init-container PVC mount would keep an RWO disk attached until bootstrap
+exits and deadlock a Sandbox scheduled on another node. Completed preparation
+Jobs remain Helm-owned rather than disappearing during a long install.
+Failed lifecycle attempts retain Pods for diagnosis. Ordinary upgrades do not
+reseed live state; recovery reseeding requires the documented stopped-Sandbox
+acknowledgement.
 
 Chart `0.4.0` changed the configuration identity of every Sandbox (the seed
 plugin identities replaced the previous SRE bundle fields). Retire a Sandbox

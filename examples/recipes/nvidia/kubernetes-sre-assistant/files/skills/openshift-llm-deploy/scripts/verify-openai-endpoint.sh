@@ -6,6 +6,7 @@
 set -eu
 
 export PATH="/chart-bin:/toolbox:${PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}"
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
 usage() {
   cat >&2 <<'EOF'
@@ -92,7 +93,7 @@ json.dump(
     open(sys.argv[1], "w", encoding="utf-8"),
 )
 PY
-if ! oc create --raw="$service_proxy/v1/chat/completions" -f "$workdir/simple.json" \
+if ! python3 "$script_dir/post-service-json.py" --namespace "$namespace" --service "$service" --body "$workdir/simple.json" \
   >"$workdir/simple-response.json" 2>"$workdir/simple.err" || \
   ! python3 - "$workdir/simple-response.json" <<'PY'
 import json
@@ -139,7 +140,7 @@ json.dump(
 )
 PY
 tool_result=not-observed
-if oc create --raw="$service_proxy/v1/chat/completions" -f "$workdir/tool.json" \
+if python3 "$script_dir/post-service-json.py" --namespace "$namespace" --service "$service" --body "$workdir/tool.json" \
   >"$workdir/tool-response.json" 2>"$workdir/tool.err"; then
   if python3 - "$workdir/tool-response.json" <<'PY'
 import json
