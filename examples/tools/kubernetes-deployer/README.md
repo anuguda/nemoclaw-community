@@ -125,11 +125,28 @@ owner key through stdin into container tmpfs, with networking disabled.
 Rendered SRE YAML can contain generated proxy credentials: keep it private,
 never commit it, and remove it after provisioning.
 
-Bootstrap signs the **full effective** policy after SRE/runtime overlays are
-merged, plus the exact driver envelope and provider profiles. No post-sign
-policy merge is allowed. Bundle-owner, document-signing, gateway-JWT and TLS
-identities are distinct and retained across retries. The owner key is never
-mounted into an agent or the APF runtime.
+Bootstrap signs the complete sandbox base policy after SRE/runtime overlays,
+plus the exact driver envelope and separate provider profiles. APF bootstrap
+enables native `providers_v2_enabled` so the gateway can compose APF-vended
+profiles for explicitly attached providers. Never apply unsigned policy overrides after signing.
+Bundle-owner, document-signing, gateway-JWT and TLS identities are distinct and
+retained across retries. The owner key is never mounted into an agent or APF.
+
+Read back both the admitted `GetSandbox` signature/spec digest and effective
+`GetSandboxConfig` policy. The admission token covers the sandbox base, not an
+assertion that native provider composition left its bytes unchanged.
+The default inference provider is deliberately not attached to the sandbox:
+credentials remain gateway-side and requests use the signed `inference.local`
+endpoint rules. Its APF-vended profile being readable is not evidence that
+an upstream-host provider layer was composed into the sandbox policy. Managed
+inference routing uses OpenShell's inference router, not sandbox provider-profile
+HTTP rules. Verify separately any profiles that an installation explicitly attaches.
+
+`tls: skip` is an L4 host/port/binary tunnel only. It preserves the upstream
+certificate and client verification, but performs no HTTP inspection or
+credential injection. APF rejects raw-TLS endpoints that declare L7 controls.
+The private-CA SRE proxy itself enforces HTTP methods/paths and bearer/RBAC rules;
+do not describe those raw-TLS connections as APF HTTP enforcement.
 
 APF uses verified HTTPS and typed, audience-bound extension JWTs. Its callback
 identity is a rotating, Pod-bound OIDC token, not unsupported Kubernetes mTLS

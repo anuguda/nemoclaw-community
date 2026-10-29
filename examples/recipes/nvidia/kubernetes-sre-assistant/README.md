@@ -87,6 +87,25 @@ modified.
   server dry-run. Neither the agent nor model requested GPUs. APF governs the
   agent runtime; model Pods remain governed by Kubernetes RBAC/admission.
 
+Follow-up governance review corrected two security semantics, then requalified
+both live canaries with runtime build R5 and signed bundle revision 2:
+
+- Bootstrap explicitly enables `providers_v2_enabled`. Official gateway readback
+  confirmed it on both platforms; `GetSandbox` signatures and canonical spec
+  digests passed again for revision 2.
+- Effective `GetSandboxConfig` readback showed inspecting, enforced
+  `inference.local` rules and L4-only private-CA SRE proxy endpoints.
+  APF projection now rejects raw-TLS endpoints with unenforceable HTTP controls
+  in both sandbox policies and native provider YAML.
+- The reasoning provider remains gateway-side, not attached to the sandbox.
+  Its APF profile is available, but this run does not claim an upstream-host
+  provider layer was composed. See the deployer's managed-inference boundary.
+- Both rebuilt agents performed fresh real cluster reads. Installed CPU-model
+  completion and tool-call checks passed again; a forbidden inference path
+  returned HTTP 403 from inside each sandbox.
+- Native Helm revision 8 and OpenShift revision 13 completed with signed
+  revision 2, retained storage/identities and reseeding disabled.
+
 Single-request server-reported decode samples (8 completion tokens; not a load
 benchmark or cross-platform performance comparison):
 
@@ -105,6 +124,14 @@ Helm qualification: the native Helm 4.2.1 operation outlived its timeout and lef
 Helm 4.2.3 upgrade with `--wait=legacy` completed the final retained-state bundle
 cutover. No process cancellation or direct Helm-storage edit was used. Both
 platforms subsequently exercised the installed final client/readiness code.
+
+The follow-up native rollout exposed an OIDC issuer mismatch after a previously
+CLI-only override was omitted. Persisting the exact discovery issuer,
+`https://kubernetes.default.svc.cluster.local`, in the native deployment values
+restored gateway/relay readiness. The OpenShift issuer remains its own discovered
+value; do not copy one cluster's issuer to another. OpenShift image ownership
+conflicts were resolved with explicit server-side field ownership on the isolated
+canary release, not by replacing unrelated resources.
 
 Qualification limits: SMTP delivery was not tested because transport/sender
 credentials were unavailable. OpenClaw has compatibility tests, not a live

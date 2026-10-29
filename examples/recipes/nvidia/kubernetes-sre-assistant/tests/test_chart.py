@@ -536,9 +536,6 @@ class RecipeTest(unittest.TestCase):
         self.assertIn('verbs: ["get", "list", "watch", "create", "patch", "update"]', rbac)
         self.assertNotRegex(rbac, r'(?m)^\s*verbs:.*"delete"')
         self.assertIn('value: "GET,POST,PUT,PATCH"', proxy)
-        block = self.network_policy_block(self.rendered_policy(rendered), "kubernetes_sre")
-        self.assertIn("method: POST", block)
-        self.assertIn("method: PUT", block)
         profile = self.render("-f", str(CHART_DIR / "values-broad-no-delete.yaml"))
         self.assertIn('rbacMode: "broad-no-delete"', self.rendered_from_source(profile, f"{RECIPE_SOURCE}/000-validate.yaml"))
 
@@ -650,7 +647,6 @@ class RecipeTest(unittest.TestCase):
         self.assertNotIn("OPENSHIFT_LLM_DELETE_API", config["agentEnv"])
         mounts = self.mounts_by_path(config)
         self.assertIn("/sandbox/.hermes/model-delete-kubeconfig", mounts)
-        self.assertIn("method: DELETE", self.network_policy_block(self.rendered_policy(rendered), "openshift_llm_delete"))
         seed = self.rendered_from_source(rendered, f"{DEPLOYER_SOURCE}/seed-job.yaml")
         self.assertIn("name: MODEL_DELETE_PROXY_ENDPOINT", seed)
         network_policy = self.rendered_from_source(rendered, f"{RECIPE_SOURCE}/networkpolicy.yaml")
@@ -676,10 +672,6 @@ class RecipeTest(unittest.TestCase):
         self.assertNotIn("PATCH", proxy)
         self.assertNotIn("kind: ClusterRoleBinding", rbac)
         self.assertEqual(config["agentEnv"]["METRICS_KUBECONFIG"], "/sandbox/.hermes/metrics-kubeconfig")
-        metrics_block = self.network_policy_block(self.rendered_policy(rendered), "cluster_metrics")
-        self.assertIn("protocol: rest", metrics_block)
-        self.assertIn("tls: skip", metrics_block)
-        self.assertNotIn("method: POST", metrics_block)
         openshift = self.render(
             "-f", str(CHART_DIR / "values-openshift.yaml"), *MODEL_SKILL,
             "--set", "global.sre.openshiftLlmDeploy.metrics.enabled=true",

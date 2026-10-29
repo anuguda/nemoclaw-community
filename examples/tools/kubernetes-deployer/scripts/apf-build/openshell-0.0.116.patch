@@ -7059,7 +7059,7 @@ index b460b7b..a8543a3 100644
 +pub mod provider_yaml;
  pub use projector::OpenShellProjector;
 diff --git a/crates/apf-openshell-projector/src/projector.rs b/crates/apf-openshell-projector/src/projector.rs
-index 075bfab..3916801 100644
+index 075bfab..598cd26 100644
 --- a/crates/apf-openshell-projector/src/projector.rs
 +++ b/crates/apf-openshell-projector/src/projector.rs
 @@ -19,7 +19,6 @@ use std::collections::BTreeMap;
@@ -7082,7 +7082,7 @@ index 075bfab..3916801 100644
              surfaces.push(CompiledSurface {
                  kind: SURFACE_PROVIDER_PROFILE.to_string(),
                  name: name.clone(),
-@@ -470,21 +474,22 @@ fn lower_rule(rule: &ir::NetworkPolicyRule) -> Result<os::NetworkPolicyRule, Str
+@@ -470,21 +474,33 @@ fn lower_rule(rule: &ir::NetworkPolicyRule) -> Result<os::NetworkPolicyRule, Str
              .iter()
              .map(|b| os::NetworkBinary {
                  path: b.path.clone(),
@@ -7094,6 +7094,17 @@ index 075bfab..3916801 100644
  
 -fn lower_endpoint(e: &ir::NetworkEndpoint) -> Result<os::NetworkEndpoint, String> {
 +pub(crate) fn lower_endpoint(e: &ir::NetworkEndpoint) -> Result<os::NetworkEndpoint, String> {
++    // A raw TLS tunnel cannot inspect, enforce or audit HTTP-level controls.
++    if e.tls == "skip"
++        && (!e.protocol.is_empty() || !e.path.is_empty() || !e.enforcement.is_empty()
++            || !e.access.is_empty() || !e.rules.is_empty() || !e.deny_rules.is_empty()
++            || e.allow_encoded_slash || e.websocket_credential_rewrite
++            || e.request_body_credential_rewrite || !e.persisted_queries.is_empty()
++            || !e.graphql_persisted_queries.is_empty() || e.graphql_max_body_bytes != 0
++            || e.json_rpc_max_body_bytes != 0 || e.mcp.is_some())
++    {
++        return Err("raw TLS skip endpoint cannot specify L7 controls; enforce HTTP authorization at the trusted upstream".into());
++    }
      Ok(os::NetworkEndpoint {
          host: e.host.clone(),
          path: e.path.clone(),
@@ -7109,7 +7120,7 @@ index 075bfab..3916801 100644
          rules: e.rules.iter().map(lower_l7rule).collect(),
          allowed_ips: e.allowed_ips.clone(),
          deny_rules: e.deny_rules.iter().map(lower_deny_rule).collect(),
-@@ -512,19 +517,17 @@ fn lower_endpoint(e: &ir::NetworkEndpoint) -> Result<os::NetworkEndpoint, String
+@@ -512,19 +528,17 @@ fn lower_endpoint(e: &ir::NetworkEndpoint) -> Result<os::NetworkEndpoint, String
          mcp: e.mcp.as_ref().map(|m| os::McpOptions {
              strict_tool_names: m.strict_tool_names,
              allow_all_known_mcp_methods: m.allow_all_known_mcp_methods,
@@ -7135,7 +7146,7 @@ index 075bfab..3916801 100644
      })
  }
  
-@@ -579,33 +582,25 @@ fn lower_query(m: &ir::L7QueryMatcher) -> os::L7QueryMatcher {
+@@ -579,33 +593,25 @@ fn lower_query(m: &ir::L7QueryMatcher) -> os::L7QueryMatcher {
      }
  }
  
@@ -7178,7 +7189,7 @@ index 075bfab..3916801 100644
          _ => Err("invalid endpoint access preset".into()),
      }
  }
-@@ -690,7 +685,7 @@ spec:
+@@ -690,7 +696,7 @@ spec:
      }
  
      #[test]
@@ -7187,7 +7198,7 @@ index 075bfab..3916801 100644
          let endpoint = lower_endpoint(&ir::NetworkEndpoint {
              enforcement: "enforce".into(),
              tls: "terminate".into(),
-@@ -698,21 +693,36 @@ spec:
+@@ -698,21 +704,58 @@ spec:
              ..Default::default()
          })
          .unwrap();
@@ -7207,7 +7218,12 @@ index 075bfab..3916801 100644
              (omitted.tls, omitted.enforcement, omitted.access),
 -            (0, 0, 0)
 +            (String::new(), String::new(), String::new())
-+        );
+         );
+-        assert_eq!(endpoint_tls("passthrough").unwrap() as i32, 3);
+-        assert_eq!(endpoint_tls("skip").unwrap() as i32, 1);
+-        assert_eq!(endpoint_enforcement("audit").unwrap() as i32, 2);
+-        assert_eq!(endpoint_access("read-only").unwrap() as i32, 1);
+-        assert_eq!(endpoint_access("full").unwrap() as i32, 3);
 +        assert_eq!(endpoint_tls("passthrough").unwrap(), "passthrough");
 +        assert_eq!(endpoint_enforcement("audit").unwrap(), "audit");
 +        assert_eq!(endpoint_access("read-only").unwrap(), "read-only");
@@ -7215,20 +7231,37 @@ index 075bfab..3916801 100644
 +    }
 +
 +    #[test]
-+    fn private_ca_proxy_skip_survives_native_policy_projection() {
-+        let policy = parse_and_lower(
-+            "spec:\n  network_policies:\n    proxy:\n      endpoints:\n        - host: sre-proxy.test.svc.cluster.local\n          port: 8001\n          protocol: rest\n          tls: skip\n          enforcement: enforce\n          rules:\n            - allow: {method: GET, path: '/api/**'}\n",
-         );
--        assert_eq!(endpoint_tls("passthrough").unwrap() as i32, 3);
--        assert_eq!(endpoint_tls("skip").unwrap() as i32, 1);
--        assert_eq!(endpoint_enforcement("audit").unwrap() as i32, 2);
--        assert_eq!(endpoint_access("read-only").unwrap() as i32, 1);
--        assert_eq!(endpoint_access("full").unwrap() as i32, 3);
-+        let endpoint = &policy.network_policies["proxy"].endpoints[0];
-+        assert_eq!(endpoint.tls, "skip");
-+        assert_eq!(endpoint.host, "sre-proxy.test.svc.cluster.local");
-+        assert_eq!(endpoint.enforcement, "enforce");
-+        assert_eq!(endpoint.rules[0].allow.as_ref().unwrap().method, "GET");
++    fn raw_tls_accepts_l4_only_and_rejects_uninspectable_l7_controls() {
++        let l4 = ir::NetworkEndpoint {
++            host: "sre-proxy.test.svc.cluster.local".into(),
++            port: 8001,
++            tls: "skip".into(),
++            ..Default::default()
++        };
++        assert!(lower_endpoint(&l4).is_ok());
++        for field in ["protocol", "enforcement", "access", "rules", "deny_rules", "path", "mcp", "body_rewrite"] {
++            let mut endpoint = l4.clone();
++            match field {
++                "protocol" => endpoint.protocol = "rest".into(),
++                "enforcement" => endpoint.enforcement = "enforce".into(),
++                "access" => endpoint.access = "read-only".into(),
++                "rules" => endpoint.rules.push(Default::default()),
++                "deny_rules" => endpoint.deny_rules.push(Default::default()),
++                "path" => endpoint.path = "/api/**".into(),
++                "mcp" => endpoint.mcp = Some(Default::default()),
++                _ => endpoint.request_body_credential_rewrite = true,
++            }
++            assert!(lower_endpoint(&endpoint).unwrap_err().contains("raw TLS skip"));
++        }
++        assert!(crate::provider_yaml::profile_from_yaml(
++            b"id: p\nendpoints: [{host: proxy.test, port: 8001, tls: skip}]\n",
++        ).is_ok());
++        for extra in ["protocol: rest", "enforcement: enforce", "access: read-only",
++                      "path: /api/**", "rules: [{allow: {method: GET, path: '/api/**'}}]"] {
++            let yaml = format!("id: p\nendpoints:\n  - host: proxy.test\n    port: 8001\n    tls: skip\n    {extra}\n");
++            assert!(crate::provider_yaml::profile_from_yaml(yaml.as_bytes())
++                .unwrap_err().contains("raw TLS skip"));
++        }
      }
  
      #[test]

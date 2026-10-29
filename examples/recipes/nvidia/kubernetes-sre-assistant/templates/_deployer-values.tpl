@@ -87,23 +87,9 @@ kubernetes_sre:
   endpoints:
     - host: {{ include "sre-assistant.proxyHost" (dict "root" . "name" (include "sre-assistant.proxyName" .)) }}
       port: {{ int $sre.proxy.port }}
-      protocol: rest
-      # Preserve the chart proxy's private-CA TLS session. OpenShell still
-      # enforces exact host/port/binary policy; the chart proxy enforces L7.
+      # L4-only tunnel: the private-CA proxy owns HTTP authorization.
+      # No HTTP rule can be inspected when OpenShell preserves end-to-end TLS.
       tls: skip
-      enforcement: enforce
-      rules:
-        - allow: { method: GET, path: "/**" }
-        {{- if ne $sre.rbac.mode "read-only" }}
-        - allow: { method: PATCH, path: "/**" }
-        {{- end }}
-        {{- if has $sre.rbac.mode (list "broad-no-delete" "protected-advanced") }}
-        - allow: { method: POST, path: "/**" }
-        - allow: { method: PUT, path: "/**" }
-        {{- end }}
-        {{- if eq $sre.rbac.mode "protected-advanced" }}
-        - allow: { method: DELETE, path: "/**" }
-        {{- end }}
   binaries:
     - { path: /usr/bin/curl }
     - { path: /usr/local/bin/curl }
@@ -117,12 +103,7 @@ openshift_llm_delete:
   endpoints:
     - host: {{ include "sre-assistant.proxyHost" (dict "root" . "name" (include "sre-assistant.modelDeleteProxyName" .)) }}
       port: {{ int $sre.proxy.port }}
-      protocol: rest
       tls: skip
-      enforcement: enforce
-      rules:
-        - allow: { method: GET, path: "/**" }
-        - allow: { method: DELETE, path: "/**" }
   binaries:
     - { path: /usr/bin/curl }
     - { path: /usr/local/bin/curl }
@@ -137,11 +118,7 @@ cluster_metrics:
   endpoints:
     - host: {{ include "sre-assistant.proxyHost" (dict "root" . "name" (include "sre-assistant.metricsProxyName" .)) }}
       port: {{ int $sre.proxy.port }}
-      protocol: rest
       tls: skip
-      enforcement: enforce
-      rules:
-        - allow: { method: GET, path: "/**" }
   binaries:
     - { path: /chart-bin/oc }
     - { path: /chart-bin/kubectl }

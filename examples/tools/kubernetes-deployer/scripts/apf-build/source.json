@@ -4,12 +4,12 @@
   "openShellCommit": "d1155aa70042d3e2ee49dbfa15346b108b7c1d92",
   "openShellVersion": "0.0.116",
   "patch": "openshell-0.0.116.patch",
-  "patchSha256": "90b474efcc62ce661e180029ab1253acb62d8b5d349cf9ce11cd3b11f87a309e",
+  "patchSha256": "0d89db4b248dbbc50414327122465761afb4ff24b861c70c629b695b3da38a41",
   "changes": [
     "Official 0.0.116 protobuf and extension authentication port",
     "Exact signed Kubernetes driver envelope including PVC subpaths, scheduling and resources",
     "Verified TLS callbacks with per-call rotating OIDC token and authenticated provider-type lookup for native merge updates",
-    "Native tls:skip retained without disabling client CA or hostname verification",
+    "Native tls:skip limited to L4-only endpoints; reject unenforceable L7 declarations while preserving client CA and hostname verification",
     "Expiry-aware renewal of unchanged policies after restart without waiting for a bundle change"
   ],
   "buildTargets": [

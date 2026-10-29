@@ -601,6 +601,8 @@ def main() -> None:
     if CONFIG.get("apfEnabled"):
         run(["settings", "set", "--global", "--key", "agent_policy_proposals_enabled",
              "--value", "false", "--yes"])
+        run(["settings", "set", "--global", "--key", "providers_v2_enabled",
+             "--value", "true", "--yes"])
     if CONFIG.get("sandboxDesiredState", "present") == "absent":
         # Reviewed teardown: remove only this release's sandbox and stop. The
         # provider and workspace memberships stay so a later `present` revision
