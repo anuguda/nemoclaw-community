@@ -357,6 +357,24 @@ This is required by containerd/runc on native Kubernetes. The main container
 keeps both `/tools` and the launcher read-only on Kubernetes and OpenShift;
 the fix does not relax APF, SCC, RBAC or root-filesystem restrictions.
 
+Revalidated on 2026-10-30 with native Kubernetes 1.36.2/containerd 2.3.1
+and OpenShift 4.22.6/CRI-O. The APF/Hermes canaries enabled the operator
+client without recreating their sandboxes or reseeding retained state; actual
+launcher invocations completed read-only SRE proxy queries on both platforms.
+Official `GetSandbox` RPC verification passed Ed25519 signatures and canonical
+policy digests for native bundle revision 9 and OpenShift bundle revision 11.
+A separate, non-APF OpenClaw verification release received the same init-mount
+change: its TUI connected and a fresh agent turn completed native `read`/`exec`
+tools against current cluster Pod state. Both main-container mounts remained
+read-only, with non-root execution, a read-only root filesystem and all
+capabilities dropped. This matrix does not qualify combined APF/OpenClaw.
+
+For an existing release, use its reviewed values and enable
+`operatorClient.enabled=true` (`deployer.operatorClient.enabled=true` in the SRE
+umbrella chart). Keep upgrade reseeding disabled. Preparing this client-side
+mount does not require changing the signed agent policy or making `/tools`
+writable in the main container.
+
 ```bash
 helm upgrade --install nemoclaw-hermes . \
   --namespace nemoclaw-hermes \
