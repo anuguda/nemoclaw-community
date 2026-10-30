@@ -344,12 +344,18 @@ that mode can expose the model credential on the network.
 ## In-cluster Hermes chat (no local OpenShell binary)
 
 Set `operatorClient.enabled=true` during installation or upgrade to create one
-attach-only in-cluster client for the existing OpenShell-managed Hermes
-Sandbox. The client downloads the pinned OpenShell release artifact in an init
-container, verifies its SHA-256 digest, and always starts the fixed
-`openshell sandbox exec ... hermes` command. It does not contain Hermes,
-NemoClaw, or model credentials itself. `operatorClient.skills` lists the Hermes
-skills the session activates; recipes set it.
+attach-only in-cluster client for the existing OpenShell-managed agent.
+The client downloads the pinned OpenShell release artifact in an init
+container and verifies its SHA-256 digest. It starts the fixed
+`openshell sandbox exec ... hermes` command by default, or `... openclaw tui`
+when `agent.runtime=openclaw`. The client contains neither agent runtime nor
+model credentials. `operatorClient.skills` selects Hermes skills only.
+
+The init container also mounts `/tools/hermes-chat` while its `/tools` volume
+is writable, preparing the nested mountpoint before the main container starts.
+This is required by containerd/runc on native Kubernetes. The main container
+keeps both `/tools` and the launcher read-only on Kubernetes and OpenShift;
+the fix does not relax APF, SCC, RBAC or root-filesystem restrictions.
 
 ```bash
 helm upgrade --install nemoclaw-hermes . \

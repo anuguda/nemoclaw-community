@@ -89,6 +89,12 @@ spec:
               readOnly: true
             - name: tools
               mountPath: /tools
+            # Create the nested mountpoint while /tools is writable. The main
+            # container keeps /tools read-only; containerd cannot create it then.
+            - name: runtime
+              mountPath: /tools/hermes-chat
+              subPath: operator_client.py
+              readOnly: true
             - name: tmp
               mountPath: /tmp
       containers:
